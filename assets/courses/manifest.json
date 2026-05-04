@@ -1,0 +1,5 @@
+{
+  "version": 1,
+  "description": "Bundled courses shipped with the app for offline access",
+  "courses": ["EDU_ONBOARDING_APP"]
+}

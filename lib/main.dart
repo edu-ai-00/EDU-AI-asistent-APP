@@ -1,0 +1,75 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'app.dart';
+import 'core/providers/core_providers.dart';
+import 'core/services/auth_token_storage.dart';
+import 'core/theme/app_theme.dart';
+import 'core/util/silent_log.dart';
+
+// Re-exports for backward compatibility — existing pages import these from
+// 'package:eduai/main.dart'.
+export 'app.dart' show MyApp;
+export 'utils/achievement_stats.dart' show countAchievementStats;
+
+/// Global route observer for [RouteAware] subscribers (e.g. CourseDetailPage).
+final RouteObserver<ModalRoute<void>> routeObserver = RouteObserver<ModalRoute<void>>();
+
+/// Restore the user's previously selected theme (built-in or custom).
+Future<void> _restoreSavedTheme() async {
+  final name = await ThemeManager.getSelectedThemeName();
+  if (name == null) return;
+
+  // Built-in themes ship as bundled assets.
+  const builtIn = {
+    'Default': 'assets/themes/default.json',
+    'Ocean': 'assets/themes/ocean.json',
+    'Sunset': 'assets/themes/sunset.json',
+  };
+  if (builtIn.containsKey(name)) {
+    try {
+      await ThemeManager.loadFromAsset(builtIn[name]!);
+      return;
+    } catch (e, st) {
+      silentLog('main:restoreSavedTheme:builtin', e, st);
+    }
+  }
+
+  // Fall back to user-saved custom themes.
+  try {
+    final customs = await ThemeManager.loadCustomThemes();
+    for (final t in customs) {
+      if (t.name == name) {
+        ThemeManager.apply(t);
+        return;
+      }
+    }
+  } catch (e, st) {
+    silentLog('main:restoreSavedTheme:custom', e, st);
+  }
+}
+
+void main() async {
+  // Ensure Flutter bindings are initialized before using plugins.
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // Initialize SharedPreferences.
+  final sharedPreferences = await SharedPreferences.getInstance();
+
+  // Initialize secure auth-token storage (migrates legacy plaintext token).
+  final authTokenStorage = AuthTokenStorage(prefs: sharedPreferences);
+  await authTokenStorage.load();
+
+  // Restore previously selected theme.
+  await _restoreSavedTheme();
+
+  runApp(
+    ProviderScope(
+      overrides: [
+        sharedPreferencesProvider.overrideWithValue(sharedPreferences),
+        authTokenStorageProvider.overrideWithValue(authTokenStorage),
+      ],
+      child: const MyApp(),
+    ),
+  );
+}
