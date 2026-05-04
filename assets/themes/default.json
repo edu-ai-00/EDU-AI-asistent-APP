@@ -1,0 +1,76 @@
+{
+  "name": "Default",
+  "version": 1,
+  "colors": {
+    "primary": "#AB9FF2",
+    "primaryDark": "#3C315B",
+    "background": "#F6F2FF",
+    "gradientPurple": "#7F68C1",
+    "surface": "#FFFFFF",
+
+    "success": "#2FBE87",
+    "orange": "#FF7128",
+    "warning": "#FF9800",
+    "error": "#E53935",
+    "errorLight": "#FF6B6B",
+
+    "surfaceLight": "#E9E4F5",
+    "progressTrack": "#DDD5EF",
+    "progressFill": "#AFA3F6",
+    "quizPurple": "#6B5CFF",
+    "inputBg": "#E8E0F4",
+    "infoBg": "#F3F0FF",
+    "disabled": "#827B96",
+    "disabledButton": "#BEB9C9",
+    "progressBorder": "#8178B5",
+
+    "cardBlue": "#A7D9FF",
+    "cardLavender": "#E8D4F8",
+    "cardPeach": "#FFE4B5",
+    "cardPeachDark": "#FFD4B8",
+    "cardYellow": "#FFFFC6",
+    "successBg": "#E6F7F1",
+    "errorBg": "#FFEBEE",
+    "hintBg": "#FFF9E6",
+    "hintBorder": "#FFD666",
+    "hintIconColor": "#FFB800",
+    "orangeBg": "#FFEDE6",
+    "successBgLight": "#E8F5E9",
+    "videoDark": "#1A1A2E",
+    "hintIcon": "#FFE082",
+    "bannerOrange": "#FFB347",
+    "bannerOrangeDark": "#FF8C00",
+
+    "avatarFox": "#FFE4D6",
+    "avatarPanda": "#E8E8E8",
+    "avatarLion": "#FFF3D6",
+    "avatarFrog": "#D6F5E6",
+    "avatarOwl": "#E8DFF5",
+    "avatarCat": "#FFE8F0",
+
+    "subjectGrammar": "#FFF3D4",
+    "subjectLiterature": "#FFE4E4",
+    "subjectMath": "#D4F8E8",
+    "subjectChemistry": "#D4F4FF",
+    "subjectBiology": "#E8D4F8",
+
+    "skillRed": "#FFE4E4",
+    "skillBlue": "#E4E4FF",
+
+    "gradientGold": "#FFD000"
+  },
+  "typography": {
+    "headingFont": "Nunito",
+    "bodyFont": "Poppins",
+    "codeFont": "Fira Code"
+  },
+  "radii": {
+    "xs": 8,
+    "s": 12,
+    "m": 16,
+    "l": 20,
+    "xl": 24,
+    "pill": 30,
+    "sheet": 32
+  }
+}

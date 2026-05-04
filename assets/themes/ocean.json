@@ -1,0 +1,76 @@
+{
+  "name": "Ocean",
+  "version": 1,
+  "colors": {
+    "primary": "#64B5F6",
+    "primaryDark": "#1A3A5C",
+    "background": "#EFF6FF",
+    "gradientPurple": "#4A90D9",
+    "surface": "#FFFFFF",
+
+    "success": "#26A69A",
+    "orange": "#FF8A50",
+    "warning": "#FFB74D",
+    "error": "#EF5350",
+    "errorLight": "#FF8A80",
+
+    "surfaceLight": "#D6E8F7",
+    "progressTrack": "#C8DDF0",
+    "progressFill": "#64B5F6",
+    "quizPurple": "#5C6BC0",
+    "inputBg": "#DCE8F5",
+    "infoBg": "#E8F1FB",
+    "disabled": "#78909C",
+    "disabledButton": "#B0BEC5",
+    "progressBorder": "#5B8DB8",
+
+    "cardBlue": "#90CAF9",
+    "cardLavender": "#C5CAE9",
+    "cardPeach": "#FFCCBC",
+    "cardPeachDark": "#FFAB91",
+    "cardYellow": "#FFF9C4",
+    "successBg": "#E0F2F1",
+    "errorBg": "#FFEBEE",
+    "hintBg": "#FFF8E1",
+    "hintBorder": "#FFD54F",
+    "hintIconColor": "#FFA000",
+    "orangeBg": "#FBE9E7",
+    "successBgLight": "#E8F5E9",
+    "videoDark": "#0D2137",
+    "hintIcon": "#FFE082",
+    "bannerOrange": "#FF9800",
+    "bannerOrangeDark": "#F57C00",
+
+    "avatarFox": "#FFE0B2",
+    "avatarPanda": "#ECEFF1",
+    "avatarLion": "#FFF9C4",
+    "avatarFrog": "#C8E6C9",
+    "avatarOwl": "#D1C4E9",
+    "avatarCat": "#F8BBD0",
+
+    "subjectGrammar": "#FFF9C4",
+    "subjectLiterature": "#FFCDD2",
+    "subjectMath": "#C8E6C9",
+    "subjectChemistry": "#B3E5FC",
+    "subjectBiology": "#D1C4E9",
+
+    "skillRed": "#FFCDD2",
+    "skillBlue": "#BBDEFB",
+
+    "gradientGold": "#FFD54F"
+  },
+  "typography": {
+    "headingFont": "Nunito",
+    "bodyFont": "Poppins",
+    "codeFont": "Fira Code"
+  },
+  "radii": {
+    "xs": 8,
+    "s": 12,
+    "m": 16,
+    "l": 20,
+    "xl": 24,
+    "pill": 30,
+    "sheet": 32
+  }
+}
