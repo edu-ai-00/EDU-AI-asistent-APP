@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../core/strings/app_strings.dart';
 import '../core/theme/app_theme.dart';
 import 'block_model.dart';
 export 'block_model.dart';
@@ -550,6 +551,18 @@ class Course {
     return getBlocksForLesson(lessons[index].id);
   }
 
+  /// Every block defined in the course `blocks[]`, regardless of whether it is
+  /// referenced by a lesson. Used to resolve practice cards for unassigned
+  /// blocks (e.g. bookmarked or auto-bookmarked quiz questions) that the
+  /// lesson-only loaders would otherwise miss.
+  List<ContentBlock> getAllBlocks() {
+    if (_rawData == null) return [];
+    final blocks = _rawData['blocks'] as List<dynamic>? ?? [];
+    return blocks
+        .map((b) => ContentBlock.fromJson(b as Map<String, dynamic>))
+        .toList();
+  }
+
   /// Find which lesson contains a given block ID.
   /// Returns (lessonId, lessonIndex) or null if not found.
   ({String lessonId, int lessonIndex})? findLessonForBlock(String blockId) {
@@ -966,7 +979,7 @@ class Course {
 
       lessons.add(Lesson(
         id: lessonJson['lesson_id'] as String? ?? 'lesson_$i',
-        title: lessonJson['name'] as String? ?? 'Lekce ${i + 1}',
+        title: lessonJson['name'] as String? ?? AppStrings.lessonFallbackName(i + 1),
         subtitle: lessonJson['description'] as String? ?? '',
         iconEmoji: emoji,
         status: status,
@@ -1003,7 +1016,7 @@ class Course {
     final cleanFallback = (fallbackName ?? '').trim();
     final resolvedTitle = (dataName != null && dataName.isNotEmpty)
         ? dataName
-        : (cleanFallback.isNotEmpty ? cleanFallback : 'Kurz');
+        : (cleanFallback.isNotEmpty ? cleanFallback : AppStrings.defaultCourseName);
 
     return Course(
       id: data['course_id'] as String? ?? id,

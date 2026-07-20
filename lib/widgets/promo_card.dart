@@ -8,7 +8,9 @@ import '../core/theme/app_theme.dart';
 /// of pages like Přehled (Overview).
 class PromoCard extends StatelessWidget {
   /// Badge text displayed in the top-left corner (e.g., "NOVÉ")
-  final String badge;
+  /// Badge text. Null falls back to `AppStrings.promoDefaultBadge`
+  /// (resolved at build time so it follows the active locale).
+  final String? badge;
 
   /// Badge background color
   final Color? badgeColor;
@@ -36,7 +38,7 @@ class PromoCard extends StatelessWidget {
 
   const PromoCard({
     super.key,
-    this.badge = AppStrings.promoDefaultBadge,
+    this.badge,
     this.badgeColor,
     required this.title,
     required this.description,
@@ -139,7 +141,7 @@ class PromoCard extends StatelessWidget {
         borderRadius: AppDecorations.radiusL,
       ),
       child: Text(
-        badge,
+        badge ?? AppStrings.promoDefaultBadge,
         style: AppTextStyles.badge(color: Colors.white),
       ),
     );

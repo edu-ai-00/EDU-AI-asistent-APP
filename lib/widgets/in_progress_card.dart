@@ -50,7 +50,9 @@ class InProgressCard extends StatelessWidget {
   final List<BadgeItem>? badges;
 
   /// Button text
-  final String buttonText;
+  /// Custom button text. When null, uses the locale-aware
+  /// `AppStrings.actionContinue` resolved at build time.
+  final String? buttonText;
 
   /// Whether to show the progress bar
   final bool showProgressBar;
@@ -75,7 +77,7 @@ class InProgressCard extends StatelessWidget {
     this.currentProgress = 0,
     this.totalProgress = 0,
     this.badges,
-    this.buttonText = AppStrings.actionContinue,
+    this.buttonText,
     this.showProgressBar = true,
     this.iconOnRight = false,
     this.onButtonTap,
@@ -289,7 +291,7 @@ class InProgressCard extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Text(
-              buttonText,
+              buttonText ?? AppStrings.actionContinue,
               style: AppTextStyles.statValue(
                 color: Colors.white,
               ),

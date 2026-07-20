@@ -30,15 +30,31 @@ class AuthTokenStorage {
   String? _cachedToken;
 
   /// Load the token into memory. Migrates a SharedPreferences-stored token
-  /// into secure storage on first run.
+  /// into secure storage on first run, and clears any secure token that
+  /// outlived an uninstall (iOS Keychain survives app deletion).
   Future<void> load() async {
     if (!(_prefs.getBool(_migrationFlag) ?? false)) {
+      // First run of this install. Either brand-new, or a delete+reinstall on
+      // iOS where SharedPreferences was wiped but the Keychain-backed secure
+      // token survived. The migration flag lives in SharedPreferences, so it is
+      // absent in both cases (and stays true for plain app updates, which keeps
+      // established users logged in).
       final legacy = _prefs.getString(_tokenKey);
       if (legacy != null && legacy.isNotEmpty) {
+        // Established pre-secure-storage user: carry their plaintext token over.
         try {
           await _secure.write(key: _tokenKey, value: legacy);
         } catch (_) {
           // If secure write fails (e.g. unsupported platform), keep legacy.
+        }
+      } else {
+        // No legacy token to migrate: drop any secure token left behind by a
+        // previous install so a reinstalled app starts unauthenticated instead
+        // of silently resuming a previous (guest) session.
+        try {
+          await _secure.delete(key: _tokenKey);
+        } catch (_) {
+          // Ignore — nothing to clear or unsupported platform.
         }
       }
       // Always remove the legacy plaintext copy.

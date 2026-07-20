@@ -1,4 +1,5 @@
 import '../core/database/app_database.dart';
+import '../core/strings/app_strings.dart';
 
 /// Predefined AI chat personas.
 enum ChatPersona {
@@ -21,28 +22,28 @@ enum ChatPersona {
 
   String get displayName {
     switch (this) {
-      case ChatPersona.aiTeacher: return 'AI asistent učitele';
-      case ChatPersona.mathMentor: return 'Mentor kurzu';
-      case ChatPersona.studyCoach: return 'Studijní kouč';
-      case ChatPersona.languageMentor: return 'Poradce k přijímačkám';
+      case ChatPersona.aiTeacher: return AppStrings.personaAiTeacherName;
+      case ChatPersona.mathMentor: return AppStrings.personaMathMentorName;
+      case ChatPersona.studyCoach: return AppStrings.personaStudyCoachName;
+      case ChatPersona.languageMentor: return AppStrings.personaLanguageMentorName;
     }
   }
 
   String get subtitle {
     switch (this) {
-      case ChatPersona.aiTeacher: return 'Obecný vzdělávací asistent';
-      case ChatPersona.mathMentor: return 'Specialista na matematiku';
-      case ChatPersona.studyCoach: return 'Pomáhá s technikami učení';
-      case ChatPersona.languageMentor: return 'Zodpovídá dotazy k JPZ';
+      case ChatPersona.aiTeacher: return AppStrings.personaAiTeacherSubtitle;
+      case ChatPersona.mathMentor: return AppStrings.personaMathMentorSubtitle;
+      case ChatPersona.studyCoach: return AppStrings.personaStudyCoachSubtitle;
+      case ChatPersona.languageMentor: return AppStrings.personaLanguageMentorSubtitle;
     }
   }
 
   String get description {
     switch (this) {
-      case ChatPersona.aiTeacher: return 'Pomáhá se všemi předměty';
-      case ChatPersona.mathMentor: return 'Řeší příklady krok za krokem, používá matematické zápisy';
-      case ChatPersona.studyCoach: return 'Plánování, motivace, jak se učit efektivně';
-      case ChatPersona.languageMentor: return 'Odpovědi z FAQ';
+      case ChatPersona.aiTeacher: return AppStrings.personaAiTeacherDesc;
+      case ChatPersona.mathMentor: return AppStrings.personaMathMentorDesc;
+      case ChatPersona.studyCoach: return AppStrings.personaStudyCoachDesc;
+      case ChatPersona.languageMentor: return AppStrings.personaLanguageMentorDesc;
     }
   }
 

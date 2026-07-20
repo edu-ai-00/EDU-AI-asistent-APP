@@ -10,7 +10,6 @@ import '../core/strings/app_strings.dart';
 import '../core/theme/app_theme.dart';
 import '../models/block_model.dart';
 import '../models/step_navigation.dart';
-import 'markdown_latex_widget.dart';
 import 'step_content_renderer.dart';
 
 /// Controller that allows a parent widget (e.g. QuizPage) to query and drive
@@ -19,8 +18,10 @@ import 'step_content_renderer.dart';
 class BlockStepEngineController extends ChangeNotifier {
   VoidCallback? _confirmCallback;
   VoidCallback? _continueCallback;
+  VoidCallback? _retryCallback;
   bool _hasPendingAnswer = false;
   bool _isShowingSolution = false;
+  bool _isAgainRetry = false;
 
   /// Whether the engine has a selected-but-unconfirmed answer.
   bool get hasPendingAnswer => _hasPendingAnswer;
@@ -28,11 +29,19 @@ class BlockStepEngineController extends ChangeNotifier {
   /// Whether the engine is showing solution feedback (quiz with evaluate).
   bool get isShowingSolution => _isShowingSolution;
 
+  /// Whether the engine is on a wrong go_to=AGAIN answer awaiting a retry.
+  /// When true the parent's bottom bar should offer "Zkusit znovu" (retry)
+  /// instead of "Pokračovat" (continue) — the engine hides its own button.
+  bool get isAgainRetry => _isAgainRetry;
+
   /// Trigger answer confirmation from outside the engine.
   void confirm() => _confirmCallback?.call();
 
   /// Continue past the solution screen from outside the engine.
   void continueAfterSolution() => _continueCallback?.call();
+
+  /// Clear a wrong AGAIN pick and re-enable answering from outside the engine.
+  void retryAgain() => _retryCallback?.call();
 
   // ── internal wiring (called by _BlockStepEngineState) ──
 
@@ -44,9 +53,21 @@ class BlockStepEngineController extends ChangeNotifier {
     _continueCallback = continueFn;
   }
 
-  void _detach() {
-    _confirmCallback = null;
-    _continueCallback = null;
+  void _attachRetry(VoidCallback retryFn) {
+    _retryCallback = retryFn;
+  }
+
+  /// Detach only if still bound to [confirmFn]. When a keyed engine is
+  /// recreated (e.g. quiz navigation), the new State's initState (_attach)
+  /// runs before the old State's dispose (_detach); an unconditional detach
+  /// would null the freshly attached callbacks and break the parent's
+  /// confirm/continue button.
+  void _detachIfCurrent(VoidCallback confirmFn) {
+    if (identical(_confirmCallback, confirmFn)) {
+      _confirmCallback = null;
+      _continueCallback = null;
+      _retryCallback = null;
+    }
   }
 
   void _setPendingAnswer(bool value) {
@@ -59,6 +80,13 @@ class BlockStepEngineController extends ChangeNotifier {
   void _setShowingSolution(bool value) {
     if (_isShowingSolution != value) {
       _isShowingSolution = value;
+      notifyListeners();
+    }
+  }
+
+  void _setAgainRetry(bool value) {
+    if (_isAgainRetry != value) {
+      _isAgainRetry = value;
       notifyListeners();
     }
   }
@@ -161,7 +189,10 @@ class _BlockStepEngineState extends State<BlockStepEngine> {
   late double _bestScoreKoef;
   late int _earnedXp;
   String? _quizMark;
-  EvaluationOption? _againFeedbackOption;
+  /// True while a wrong answer with go_to=AGAIN is shown: the pick stays
+  /// marked incorrect with its feedback, the correct option is NOT revealed,
+  /// and the main button becomes "Zkusit znovu" (retry) instead of continue.
+  bool _isAgainRetry = false;
 
   // Video controllers for inline playback
   final Map<String, VideoPlayerController> _videoControllers = {};
@@ -175,6 +206,12 @@ class _BlockStepEngineState extends State<BlockStepEngine> {
   // Text controller for open question input
   TextEditingController? _textController;
 
+  // Stable callback identities so the controller can detach safely even when
+  // a newer engine State has already attached (keyed recreation).
+  late final VoidCallback _boundConfirm = _confirmAnswer;
+  late final VoidCallback _boundContinue = _continueAfterSolution;
+  late final VoidCallback _boundRetry = _retryAgain;
+
   List<BlockStep> get _steps => widget.block.steps;
   BlockStep get _currentStep => _steps[_currentStepIndex];
   bool get _isLastStep => _currentStepIndex >= _steps.length - 1;
@@ -183,8 +220,9 @@ class _BlockStepEngineState extends State<BlockStepEngine> {
   void initState() {
     super.initState();
     _restoreOrInitState();
-    widget.controller?._attach(_confirmAnswer);
-    widget.controller?._attachContinue(_continueAfterSolution);
+    widget.controller?._attach(_boundConfirm);
+    widget.controller?._attachContinue(_boundContinue);
+    widget.controller?._attachRetry(_boundRetry);
     _syncControllerPendingState();
   }
 
@@ -196,7 +234,7 @@ class _BlockStepEngineState extends State<BlockStepEngine> {
       _bestScoreKoef = saved.bestScoreKoef;
       _earnedXp = saved.earnedXp;
       _quizMark = saved.quizMark;
-      _againFeedbackOption = null;
+      _isAgainRetry = false;
       _state = (saved.isBlockCompleted || widget.isCompleted)
           ? _EngineState.blockComplete
           : _deriveState();
@@ -206,7 +244,7 @@ class _BlockStepEngineState extends State<BlockStepEngine> {
       _bestScoreKoef = _kUninitializedScore;
       _earnedXp = 0;
       _quizMark = null;
-      _againFeedbackOption = null;
+      _isAgainRetry = false;
       _state = widget.isCompleted
           ? _EngineState.blockComplete
           : _deriveState();
@@ -243,8 +281,8 @@ class _BlockStepEngineState extends State<BlockStepEngine> {
     if (step.isEvaluationStep) {
       if (answer != null && answer.isAnswered) {
         // Already answered — show solution or advance
-        if (widget.exportMode == ExportMode.quizV2) {
-          return _EngineState.showingStep; // quiz doesn't show solution
+        if (widget.exportMode == ExportMode.quizV2 && widget.hideEvaluation) {
+          return _EngineState.showingStep; // quiz with eval off: no solution
         }
         final config = step.evaluationConfig;
         if (config != null && !config.showSolution) {
@@ -264,8 +302,9 @@ class _BlockStepEngineState extends State<BlockStepEngine> {
       _disposeVideoControllers();
       _restoreOrInitState();
       // Re-attach controller for the new block
-      widget.controller?._attach(_confirmAnswer);
-      widget.controller?._attachContinue(_continueAfterSolution);
+      widget.controller?._attach(_boundConfirm);
+      widget.controller?._attachContinue(_boundContinue);
+      widget.controller?._attachRetry(_boundRetry);
       _syncControllerPendingState();
     } else if (_state != _EngineState.blockComplete &&
         _state != _EngineState.showingSolution &&
@@ -286,6 +325,10 @@ class _BlockStepEngineState extends State<BlockStepEngine> {
     if (widget.controller == null) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+      // Keep the shared controller's retry flag in step with this engine —
+      // a freshly (re)built card is never an AGAIN retry, so this also clears
+      // any stale flag leaking from the previous card's retry state.
+      widget.controller!._setAgainRetry(_isAgainRetry);
       if (_state != _EngineState.awaitingAnswer) {
         widget.controller!._setPendingAnswer(false);
         return;
@@ -302,7 +345,7 @@ class _BlockStepEngineState extends State<BlockStepEngine> {
 
   @override
   void dispose() {
-    widget.controller?._detach();
+    widget.controller?._detachIfCurrent(_boundConfirm);
     _disposeVideoControllers();
     _textController?.dispose();
     super.dispose();
@@ -325,7 +368,11 @@ class _BlockStepEngineState extends State<BlockStepEngine> {
       controller.addListener(() {
         if (mounted) setState(() {});
       });
-      controller.initialize().catchError((e) {
+      controller.initialize().then((_) {
+        if (mounted) setState(() {});
+      }).catchError((e) {
+        debugPrint('[BlockStepEngine] video init failed for $url: $e');
+        if (mounted) setState(() {});
       });
       return controller;
     });
@@ -337,7 +384,11 @@ class _BlockStepEngineState extends State<BlockStepEngine> {
       controller.addListener(() {
         if (mounted) setState(() {});
       });
-      controller.initialize().catchError((e) {
+      controller.initialize().then((_) {
+        if (mounted) setState(() {});
+      }).catchError((e) {
+        debugPrint('[BlockStepEngine] audio init failed for $url: $e');
+        if (mounted) setState(() {});
       });
       return controller;
     });
@@ -392,7 +443,7 @@ class _BlockStepEngineState extends State<BlockStepEngine> {
     final step = _currentStep;
 
     setState(() {
-      _againFeedbackOption = null;
+      _isAgainRetry = false;
       _stepAnswers[step.stepId] = StepAnswerState(
         selectedOptionId: optionId,
         isAnswered: false,
@@ -408,7 +459,7 @@ class _BlockStepEngineState extends State<BlockStepEngine> {
     final step = _currentStep;
 
     setState(() {
-      _againFeedbackOption = null;
+      _isAgainRetry = false;
       _stepAnswers[step.stepId] = StepAnswerState(
         selectedOptionIds: optionIds,
         isAnswered: false,
@@ -540,37 +591,46 @@ class _BlockStepEngineState extends State<BlockStepEngine> {
     final hasOptionFeedback = selectedOption?.feedback != null && selectedOption!.feedback!.isNotEmpty;
     final hasFeedbackContent = hasSolutionText || hasSolutionImage || hasOptionFeedback;
 
+    // In quiz mode with evaluation on, always pause on the answered state so
+    // the user sees feedback (solution banner, card highlighting, etc.). The
+    // renderer already respects show_answers — when it's false the correct
+    // option just isn't revealed, but the solution banner still shows. So we
+    // do NOT gate the pause on show_answers in quiz/eval mode.
+    final isQuizEvaluating =
+        widget.exportMode == ExportMode.quizV2 && !widget.hideEvaluation;
+
     final shouldSkipSolution =
         (widget.exportMode == ExportMode.quizV2 && widget.hideEvaluation) ||
-        !(config.showAnswers) ||
-        !(config.showSolution) ||
-        !hasFeedbackContent;
+        (!isQuizEvaluating &&
+            (!(config.showAnswers) ||
+                !(config.showSolution) ||
+                !hasFeedbackContent));
 
     if (preResolved.type == NavActionType.again) {
+      // Wrong answer with go_to=AGAIN: keep the selection on screen marked
+      // incorrect (with its feedback), but do NOT reveal the correct option or
+      // the solution. The user taps "Zkusit znovu" to clear and re-answer.
       setState(() {
-        _againFeedbackOption = null;
-        final selectedId = current.selectedOptionId;
-        if (selectedId != null) {
-          _againFeedbackOption = config.options
-              .where((o) => o.id == selectedId)
-              .firstOrNull;
-        }
-        _stepAnswers.remove(step.stepId);
-        _state = _EngineState.awaitingAnswer;
-        widget.controller?._setPendingAnswer(false);
+        _isAgainRetry = true;
+        _stepAnswers[step.stepId] = updatedAnswer;
+        _state = _EngineState.showingSolution;
+        widget.controller?._setShowingSolution(true);
+        widget.controller?._setAgainRetry(true);
       });
     } else if (shouldSkipSolution) {
       // Skip solution screen — record answer without rendering green state.
       // _resolveAndNavigate has its own setState that will advance immediately.
+      _isAgainRetry = false;
       _stepAnswers[step.stepId] = updatedAnswer;
       _resolveAndNavigate(goToValue);
     } else {
       // Show solution with feedback
       setState(() {
-        _againFeedbackOption = null;
+        _isAgainRetry = false;
         _stepAnswers[step.stepId] = updatedAnswer;
         _state = _EngineState.showingSolution;
         widget.controller?._setShowingSolution(true);
+        widget.controller?._setAgainRetry(false);
       });
     }
 
@@ -580,6 +640,7 @@ class _BlockStepEngineState extends State<BlockStepEngine> {
   /// Handle "Pokračovat" after showing solution
   void _continueAfterSolution() {
     widget.controller?._setShowingSolution(false);
+    widget.controller?._setAgainRetry(false);
 
     final step = _currentStep;
     final answer = _stepAnswers[step.stepId];
@@ -604,6 +665,21 @@ class _BlockStepEngineState extends State<BlockStepEngine> {
     _resolveAndNavigate(goToValue);
   }
 
+  /// Clear an AGAIN wrong answer so the user can pick again. Bound to the
+  /// "Zkusit znovu" button shown while [_isAgainRetry] is true.
+  void _retryAgain() {
+    setState(() {
+      _isAgainRetry = false;
+      _stepAnswers.remove(_currentStep.stepId);
+      _state = _EngineState.awaitingAnswer;
+      widget.controller?._setShowingSolution(false);
+      widget.controller?._setAgainRetry(false);
+      widget.controller?._setPendingAnswer(false);
+    });
+    _emitProgress();
+    _scrollToActiveStep();
+  }
+
   void _resolveAndNavigate(String? goToValue) {
     final action = GoToResolver.resolve(
       goToValue: goToValue,
@@ -613,6 +689,7 @@ class _BlockStepEngineState extends State<BlockStepEngine> {
     );
 
     setState(() {
+      _isAgainRetry = false;
       switch (action.type) {
         case NavActionType.nextStep:
           if (_isLastStep) {
@@ -796,7 +873,8 @@ class _BlockStepEngineState extends State<BlockStepEngine> {
           step: step,
           answerState: _stepAnswers[step.stepId],
           exportMode: widget.exportMode,
-          showSolution: _state == _EngineState.showingSolution,
+          showSolution: _state == _EngineState.showingSolution && !_isAgainRetry,
+          revealCorrectAnswer: !_isAgainRetry,
           hideResults: widget.hideEvaluation,
           hideFeedback: widget.hideEvaluation,
           onOptionSelected: _onOptionSelected,
@@ -806,11 +884,6 @@ class _BlockStepEngineState extends State<BlockStepEngine> {
           getVideoController: _getVideoController,
           getAudioController: _getAudioController,
         ));
-        // Show "try again" feedback from a previous AGAIN attempt
-        if (_againFeedbackOption?.feedback != null) {
-          children.add(const SizedBox(height: 12));
-          children.add(_buildAgainFeedback());
-        }
       } else {
         // Display step (always passive) or completed question (read-only)
         children.add(StepContentRenderer(
@@ -918,7 +991,8 @@ class _BlockStepEngineState extends State<BlockStepEngine> {
             step: _currentStep,
             answerState: _stepAnswers[_currentStep.stepId],
             exportMode: widget.exportMode,
-            showSolution: _state == _EngineState.showingSolution,
+            showSolution: _state == _EngineState.showingSolution && !_isAgainRetry,
+            revealCorrectAnswer: !_isAgainRetry,
             hideResults: widget.hideEvaluation,
             hideFeedback: widget.hideEvaluation,
             onOptionSelected: _onOptionSelected,
@@ -935,43 +1009,6 @@ class _BlockStepEngineState extends State<BlockStepEngine> {
               _buildStepActionButtons(_currentStep),
               _buildMainButton(),
             ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// Feedback banner shown inline after an AGAIN go_to resets the selection.
-  Widget _buildAgainFeedback() {
-    final feedback = _againFeedbackOption!.feedback!;
-    final hasMarkdown = feedback.contains(r'$') || feedback.contains('*') ||
-        feedback.contains('__') || feedback.contains('##');
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: AppColors.orangeBg,
-        borderRadius: AppDecorations.radiusS,
-        border: Border.all(
-          color: AppColors.orange.withValues(alpha: 0.3),
-        ),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(Icons.info_outline, size: 18, color: AppColors.orange),
-          const SizedBox(width: 8),
-          Expanded(
-            child: hasMarkdown
-                ? MarkdownLatexWidget(
-                    content: feedback,
-                    textColor: AppColors.primaryDark88,
-                  )
-                : Text(
-                    feedback,
-                    style: AppTextStyles.meta(color: AppColors.primaryDark88),
-                  ),
           ),
         ],
       ),
@@ -1172,7 +1209,13 @@ class _BlockStepEngineState extends State<BlockStepEngine> {
         }
         break;
       case _EngineState.showingSolution:
-        onTap = enabled ? _continueAfterSolution : null;
+        if (_isAgainRetry) {
+          // Wrong AGAIN answer: button clears the pick for another attempt.
+          onTap = enabled ? _retryAgain : null;
+          label = AppStrings.engineTryAgain;
+        } else {
+          onTap = enabled ? _continueAfterSolution : null;
+        }
         break;
       case _EngineState.blockComplete:
         break;

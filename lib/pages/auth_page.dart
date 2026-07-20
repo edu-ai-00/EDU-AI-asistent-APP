@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:drift/drift.dart' show Value;
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, kIsWeb, TargetPlatform;
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
@@ -13,7 +16,11 @@ import 'course_detail_page.dart';
 import '../core/network/api_endpoints.dart';
 import '../core/strings/app_strings.dart';
 import 'package:eduai/core/util/silent_log.dart';
-import 'package:eduai/core/util/pin_formatter.dart';
+import 'package:eduai/core/widgets/code_input_field.dart';
+import '../routing/deep_link.dart';
+import '../core/oauth/oauth_clients.dart';
+import '../core/oauth/google_web_button.dart';
+import '../data/repositories/oauth_repository.dart';
 
 class AuthPage extends ConsumerStatefulWidget {
   /// Callback when user submits email - passes the entered email.
@@ -28,12 +35,16 @@ class AuthPage extends ConsumerStatefulWidget {
   /// When true, starts directly in email/SSO mode (skips PIN screen).
   final bool startInLoginMode;
 
+  /// Callback when OAuth sign-in completes successfully.
+  final ValueChanged<OAuthExchangeResult>? onOAuthSuccess;
+
   const AuthPage({
     super.key,
     required this.onEmailSubmit,
     this.onPinLoginComplete,
     this.onBack,
     this.startInLoginMode = false,
+    this.onOAuthSuccess,
   });
 
   @override
@@ -43,7 +54,17 @@ class AuthPage extends ConsumerStatefulWidget {
 class _AuthPageState extends ConsumerState<AuthPage> with SingleTickerProviderStateMixin {
   late bool _isSignUpMode = widget.startInLoginMode;
   bool _isLookingUpPin = false;
+  bool _isOAuthInProgress = false;
   String? _pinError;
+
+  /// Web-only: the GIS button drives Google sign-in and results arrive on this
+  /// subscription. [_googleWebReady] gates rendering the button until the SDK
+  /// is initialized. Both stay null/false on native.
+  StreamSubscription<OAuthClientResult>? _googleWebSub;
+  bool _googleWebReady = false;
+
+  /// Guards the one-shot deep-link auto-submit so it fires at most once.
+  bool _deepLinkConsumed = false;
 
   /// Inverted UI state: true when user opts OUT of shared-device mode
   /// (i.e. wants to stay permanently logged in). Default false = shared.
@@ -57,11 +78,7 @@ class _AuthPageState extends ConsumerState<AuthPage> with SingleTickerProviderSt
 
   final TextEditingController _emailController = TextEditingController();
 
-  final List<TextEditingController> _pinControllers = List.generate(
-    6,
-    (_) => TextEditingController(),
-  );
-  final List<FocusNode> _focusNodes = List.generate(6, (_) => FocusNode());
+  final CodeInputController _codeController = CodeInputController();
 
   @override
   void initState() {
@@ -93,56 +110,74 @@ class _AuthPageState extends ConsumerState<AuthPage> with SingleTickerProviderSt
     if (widget.startInLoginMode) {
       _animationController.value = 1.0;
     }
+
+    // A /course/:code or /pin/:code deep link opened straight onto this login
+    // screen (logged-out visitor). DeepLinkEntry parked the code; pick it up
+    // and resolve it through the normal guest PIN flow so the course opens
+    // without the user re-typing the code they already clicked.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _maybeConsumeDeepLink());
+
+    // Web: Google sign-in can't be triggered imperatively — a GIS button
+    // renders it and results arrive on the event stream. Subscribe once and
+    // initialize the SDK so the button can render.
+    if (kIsWeb) {
+      final client = ref.read(googleOAuthClientProvider);
+      _googleWebSub = client.signInResults().listen(_completeOAuth);
+      client.ensureInitialized().then((_) {
+        if (mounted) setState(() => _googleWebReady = true);
+      });
+    }
+  }
+
+  /// If a deep-link code is pending and we're on the PIN screen, prefill it and
+  /// auto-submit. Clearing the provider here also stops MainScreen from opening
+  /// the same course a second time after login completes.
+  void _maybeConsumeDeepLink() {
+    if (_deepLinkConsumed || !mounted) return;
+    // Only the PIN screen can resolve a code; skip when forced into login mode.
+    if (widget.startInLoginMode) return;
+
+    final code = ref.read(pendingDeepLinkCodeProvider);
+    if (code == null || code.length != 6) return;
+
+    _deepLinkConsumed = true;
+    ref.read(pendingDeepLinkCodeProvider.notifier).state = null;
+
+    setState(() => _codeController.code = code);
+    _handlePinSubmit();
   }
 
   @override
   void dispose() {
+    _googleWebSub?.cancel();
     _animationController.dispose();
     _emailController.dispose();
-    for (var controller in _pinControllers) {
-      controller.dispose();
-    }
-    for (var node in _focusNodes) {
-      node.dispose();
-    }
+    _codeController.dispose();
     super.dispose();
   }
 
-  String get _pin => _pinControllers.map((c) => c.text).join();
+  String get _pin => _codeController.code;
 
-  void _onPinChanged(int index, String value) {
-    // Clear error when user types
+  void _onCodeChanged(String value) {
+    // Clear any prior error and rebuild so the submit button reflects length.
+    // Only clear the error while the user is actively typing a new code. A
+    // programmatic clear after an invalid submit empties the field and fires
+    // onChanged('') synchronously — it must NOT wipe the just-set error, or the
+    // code silently disappears with no feedback (BR-ANKRJP).
+    if (value.isEmpty) return;
     if (_pinError != null) {
       setState(() => _pinError = null);
     }
-
-    if (value.isNotEmpty && index < 5) {
-      _focusNodes[index + 1].requestFocus();
-    }
-    setState(() {});
   }
 
-  void _handleKeyPress(int index, KeyEvent event) {
-    if (event is! KeyDownEvent) return;
-    if (event.logicalKey == LogicalKeyboardKey.backspace &&
-        _pinControllers[index].text.isEmpty &&
-        index > 0) {
-      _focusNodes[index - 1].requestFocus();
-    } else if (event.logicalKey == LogicalKeyboardKey.enter && _pin.length == 6) {
-      _handlePinSubmit();
-    }
-  }
-
-  void _clearPin() {
-    for (var controller in _pinControllers) {
-      controller.clear();
-    }
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _focusNodes[0].requestFocus();
-    });
-  }
+  void _clearPin() => _codeController.clear();
 
   Future<void> _handlePinSubmit() async {
+    // Re-entrancy guard: a submit is already in flight. Without this the
+    // deep-link auto-consume opens the course twice — setting the code fires
+    // CodeInputField.onCompleted (→ submit #1) and _maybeConsumeDeepLink then
+    // calls submit #2 directly, each pushing its own CourseDetailPage.
+    if (_isLookingUpPin) return;
     if (_pin.length != 6) return;
 
     setState(() {
@@ -175,6 +210,23 @@ class _AuthPageState extends ConsumerState<AuthPage> with SingleTickerProviderSt
           if (resolved != null && resolved.isUser) {
             // Student login code — save user and complete login
             final name = resolved.name ?? AppStrings.authDefaultStudentName;
+
+            // BR-ZDXP7C: A student login code adopts a specific server-side
+            // identity. If the currently-active local user is a *different*
+            // person (a leftover guest, or another student on a shared
+            // device), wipe local data first so their practice cards,
+            // progress and bookmarks don't leak into the "clean" account.
+            // Same-person re-login (matching email) keeps local data intact.
+            final current = await db.getActiveUser();
+            final samePerson = current != null &&
+                current.email.isNotEmpty &&
+                resolved.email != null &&
+                current.email.toLowerCase() ==
+                    resolved.email!.trim().toLowerCase();
+            if (!samePerson) {
+              await db.clearAllData();
+            }
+
             var user = await db.getActiveUser();
             if (user == null) {
               final guestId = await db.createGuestUser();
@@ -215,16 +267,15 @@ class _AuthPageState extends ConsumerState<AuthPage> with SingleTickerProviderSt
         }
       }
 
-      // Step 1c: Block guests from logged_only courses
-      // Allow if user has an email OR is server-authenticated (student PIN login,
-      // detected via local isEmailValidated flag OR Sanctum token presence).
+      // Step 1c: Block guests from logged_only courses.
+      // Allow only real accounts: a user with an email OR a server-authenticated
+      // student PIN login (flagged locally via isEmailValidated). Guests hold a
+      // Sanctum token too, so token presence must NOT count as logged in
+      // (BR-N2ENN4).
       if (course.data['logged_only'] == true) {
         final activeUser = await db.getActiveUser();
-        final hasToken = ref.read(apiClientProvider).isAuthenticated;
         if (activeUser == null ||
-            (activeUser.email.isEmpty &&
-                !activeUser.isEmailValidated &&
-                !hasToken)) {
+            (activeUser.email.isEmpty && !activeUser.isEmailValidated)) {
           setState(() {
             _isLookingUpPin = false;
             _pinError = AppStrings.authLoginRequired;
@@ -436,9 +487,70 @@ class _AuthPageState extends ConsumerState<AuthPage> with SingleTickerProviderSt
     widget.onEmailSubmit(email);
   }
 
-  void _handleOAuthLogin(String provider) {
-    // For OAuth, we'll handle differently later - for now just proceed
-    widget.onEmailSubmit('oauth_$provider@temp.local');
+  /// Native (iOS/Android) button handler: obtain the provider credential
+  /// imperatively, then exchange it. Web Google sign-in does not use this —
+  /// its GIS button feeds [_completeOAuth] via the event subscription.
+  Future<void> _handleOAuthLogin(String provider) async {
+    setState(() => _isOAuthInProgress = true);
+
+    final OAuthClientResult? clientResult;
+    try {
+      clientResult = await switch (provider) {
+        'apple' => ref.read(appleOAuthClientProvider).signIn(),
+        'google' => ref.read(googleOAuthClientProvider).signIn(),
+        'microsoft' => ref.read(microsoftOAuthClientProvider).signIn(),
+        _ => Future<OAuthClientResult?>.value(null),
+      };
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(AppStrings.genericError('$e')),
+          backgroundColor: AppColors.error,
+        ));
+        setState(() => _isOAuthInProgress = false);
+      }
+      return;
+    }
+
+    if (clientResult == null) {
+      if (mounted) setState(() => _isOAuthInProgress = false);
+      return; // user cancelled
+    }
+
+    await _completeOAuth(clientResult);
+  }
+
+  /// Exchange a provider credential for a session and notify the parent.
+  /// Shared by the native handler and the web Google event subscription.
+  Future<void> _completeOAuth(OAuthClientResult clientResult) async {
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _isOAuthInProgress = true);
+
+    try {
+      await ref.read(sessionMetaProvider).setPendingSharedDevice(!_keepLoggedIn);
+      final exchange = await ref.read(oauthRepositoryProvider).exchange(
+            clientResult,
+            sharedDevice: !_keepLoggedIn,
+          );
+
+      widget.onOAuthSuccess?.call(exchange);
+    } on OAuthExchangeException catch (e) {
+      if (mounted) {
+        messenger.showSnackBar(SnackBar(
+          content: Text(AppStrings.genericError(e.message)),
+          backgroundColor: AppColors.error,
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        messenger.showSnackBar(SnackBar(
+          content: Text(AppStrings.genericError('$e')),
+          backgroundColor: AppColors.error,
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _isOAuthInProgress = false);
+    }
   }
 
   void _toggleMode() {
@@ -466,7 +578,20 @@ class _AuthPageState extends ConsumerState<AuthPage> with SingleTickerProviderSt
         child: AnimatedBuilder(
           animation: _animationController,
           builder: (context, child) {
-            final containerHeight = screenHeight * _heightAnimation.value;
+            // Cap the card height so its top never rises above the top safe-area
+            // inset. When the keyboard opens, Scaffold's default
+            // resizeToAvoidBottomInset shrinks the body, but the card height is
+            // computed from the full screen height — without this clamp the card
+            // overflows upward and the header/back button slide under the status
+            // bar (BR-PXB3N3).
+            final mq = MediaQuery.of(context);
+            final maxContainerHeight =
+                mq.size.height - mq.viewInsets.bottom - mq.padding.top;
+            final containerHeight = maxContainerHeight <= 0
+                ? screenHeight * _heightAnimation.value
+                : (screenHeight * _heightAnimation.value)
+                    .clamp(0.0, maxContainerHeight)
+                    .toDouble();
             final logoBottom = containerHeight + 60;
             final bgBottom = containerHeight - 20;
 
@@ -513,7 +638,10 @@ class _AuthPageState extends ConsumerState<AuthPage> with SingleTickerProviderSt
                       top: false,
                       child: SingleChildScrollView(
                         padding: const EdgeInsets.fromLTRB(24, 32, 24, 24),
-                        child: Column(
+                        child: Center(
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 400),
+                            child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             // Header with back button
@@ -552,6 +680,8 @@ class _AuthPageState extends ConsumerState<AuthPage> with SingleTickerProviderSt
                                 ? _buildSignUpContent()
                                 : _buildWelcomeContent(),
                           ],
+                            ),
+                          ),
                         ),
                       ),
                     ),
@@ -573,62 +703,24 @@ class _AuthPageState extends ConsumerState<AuthPage> with SingleTickerProviderSt
       child: Column(
         children: [
           // Code input label
-          Text(
-            AppStrings.authCodeLabel,
-            style: AppTextStyles.bodySmall(color: AppColors.primaryDark64),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              AppStrings.authCodeLabel,
+              textAlign: TextAlign.left,
+              style: AppTextStyles.bodyLarge(color: AppColors.primaryDark64),
+            ),
           ),
           const SizedBox(height: 12),
-          // Alphanumeric code input fields
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: List.generate(6, (index) {
-              return SizedBox(
-                width: 48,
-                height: 56,
-                child: KeyboardListener(
-                  focusNode: FocusNode(),
-                  onKeyEvent: (event) => _handleKeyPress(index, event),
-                  child: TextField(
-                    controller: _pinControllers[index],
-                    focusNode: _focusNodes[index],
-                    keyboardType: TextInputType.text,
-                    textCapitalization: TextCapitalization.characters,
-                    textAlign: TextAlign.center,
-                    maxLength: 1,
-                    inputFormatters: [
-                      UpperCaseAlphanumericFormatter(),
-                    ],
-                    style: AppTextStyles.heading3Alt(),
-                    decoration: InputDecoration(
-                      counterText: '',
-                      contentPadding: const EdgeInsets.symmetric(vertical: 12),
-                      border: OutlineInputBorder(
-                        borderRadius: AppDecorations.radiusM,
-                        borderSide: BorderSide(
-                          color: AppColors.primaryDark16,
-                          width: 1,
-                        ),
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: AppDecorations.radiusM,
-                        borderSide: BorderSide(
-                          color: AppColors.primaryDark16,
-                          width: 1,
-                        ),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: AppDecorations.radiusM,
-                        borderSide: BorderSide(
-                          color: AppColors.primaryDark,
-                          width: 1.5,
-                        ),
-                      ),
-                    ),
-                    onChanged: (value) => _onPinChanged(index, value),
-                  ),
-                ),
-              );
-            }),
+          // Alphanumeric code input — single field rendered as 6 boxes
+          CodeInputField(
+            length: 6,
+            controller: _codeController,
+            hasError: _pinError != null,
+            onChanged: _onCodeChanged,
+            onCompleted: (_) {
+              if (!_isLookingUpPin) _handlePinSubmit();
+            },
           ),
           // Error message
           if (_pinError != null) ...[
@@ -857,38 +949,57 @@ class _AuthPageState extends ConsumerState<AuthPage> with SingleTickerProviderSt
             ],
           ),
           const SizedBox(height: 24),
-          // Google OAuth button
-          _buildOAuthButton(
-            onTap: () => _handleOAuthLogin('google'),
-            icon: SvgPicture.asset(
-              'assets/icons/google.svg',
-              width: 24,
-              height: 24,
+          // Google OAuth button. Web must use the GIS-rendered button (no
+          // imperative authenticate() on web); native uses the custom button.
+          if (kIsWeb)
+            SizedBox(
+              height: 48,
+              child: Center(
+                child: _googleWebReady
+                    ? googleRenderedSignInButton()
+                    : const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+              ), // GIS button once SDK ready; spinner while initializing
+            )
+          else
+            _buildOAuthButton(
+              onTap: _isOAuthInProgress ? null : () => _handleOAuthLogin('google'),
+              icon: SvgPicture.asset(
+                'assets/icons/google.svg',
+                width: 24,
+                height: 24,
+              ),
+              label: AppStrings.authGoogleLogin,
             ),
-            label: AppStrings.authGoogleLogin,
-          ),
           const SizedBox(height: 12),
-          // Microsoft OAuth button
-          _buildOAuthButton(
-            onTap: () => _handleOAuthLogin('microsoft'),
+          // Microsoft OAuth button — constrained to the GIS button's width on
+          // web so all three social buttons align.
+          _constrainSocialWeb(_buildOAuthButton(
+            onTap: _isOAuthInProgress ? null : () => _handleOAuthLogin('microsoft'),
             icon: SvgPicture.asset(
               'assets/icons/microsoft.svg',
               width: 24,
               height: 24,
             ),
             label: AppStrings.authMicrosoftLogin,
-          ),
-          const SizedBox(height: 12),
-          // Apple OAuth button
-          _buildOAuthButton(
-            onTap: () => _handleOAuthLogin('apple'),
-            icon: SvgPicture.asset(
-              'assets/icons/apple.svg',
-              width: 24,
-              height: 24,
-            ),
-            label: AppStrings.authAppleLogin,
-          ),
+          )),
+          // Apple OAuth button — only on Apple devices. Web/Android would need
+          // the Apple Services ID web flow, which isn't set up, so hide it there.
+          if (_showAppleSignIn) ...[
+            const SizedBox(height: 12),
+            _constrainSocialWeb(_buildOAuthButton(
+              onTap: _isOAuthInProgress ? null : () => _handleOAuthLogin('apple'),
+              icon: SvgPicture.asset(
+                'assets/icons/apple.svg',
+                width: 24,
+                height: 24,
+              ),
+              label: AppStrings.authAppleLogin,
+            )),
+          ],
           const SizedBox(height: 24),
           // Terms and Privacy Policy
           Center(
@@ -940,7 +1051,7 @@ class _AuthPageState extends ConsumerState<AuthPage> with SingleTickerProviderSt
             const SizedBox(width: 10),
             Expanded(
               child: Text(
-                'Zůstat trvale přihlášen — nejedná se o sdílené zařízení',
+                AppStrings.authKeepLoggedInLabel,
                 style: AppTextStyles.bodySmall(
                   color: AppColors.primaryDark64,
                 ),
@@ -952,34 +1063,82 @@ class _AuthPageState extends ConsumerState<AuthPage> with SingleTickerProviderSt
     );
   }
 
+  /// Apple Sign In is only offered on Apple platforms. On web and Android it
+  /// would require the Apple Services ID web OAuth flow (not configured), so
+  /// the button is hidden there.
+  bool get _showAppleSignIn =>
+      !kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.iOS ||
+          defaultTargetPlatform == TargetPlatform.macOS);
+
+  /// On web the Google button is GIS-rendered and capped near 400px wide;
+  /// constrain the other social buttons to match so the column aligns. No-op
+  /// on native, where all social buttons are full-width custom buttons.
+  Widget _constrainSocialWeb(Widget child) {
+    if (!kIsWeb) return child;
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 400),
+        child: child,
+      ),
+    );
+  }
+
   Widget _buildOAuthButton({
-    required VoidCallback onTap,
+    required VoidCallback? onTap,
     required Widget icon,
     required String label,
   }) {
+    // On web the Google button is Google-rendered (fixed ~40px tall, ~4px
+    // corners, logo pinned left, text centered, regular weight). Match the
+    // custom social buttons to it so the set looks uniform.
+    final bool matchGis = kIsWeb;
+
+    final Widget content = matchGis
+        // GIS layout: icon pinned left, label centered across the full width.
+        ? Stack(
+            alignment: Alignment.center,
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(left: 12),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: icon,
+                ),
+              ),
+              Text(
+                label,
+                textAlign: TextAlign.center,
+                style: AppTextStyles.bodyLarge().copyWith(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          )
+        : Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              icon,
+              const SizedBox(width: 12),
+              Text(label, style: AppTextStyles.bodyLarge()),
+            ],
+          );
+
     return GestureDetector(
       onTap: onTap,
       child: Container(
         width: double.infinity,
-        height: 56,
+        height: matchGis ? 40 : 56,
         decoration: BoxDecoration(
           border: Border.all(
             color: AppColors.primaryDark16,
             width: 1,
           ),
-          borderRadius: AppDecorations.radiusM,
+          borderRadius:
+              matchGis ? BorderRadius.circular(4) : AppDecorations.radiusM,
         ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            icon,
-            const SizedBox(width: 12),
-            Text(
-              label,
-              style: AppTextStyles.bodyLarge(),
-            ),
-          ],
-        ),
+        child: content,
       ),
     );
   }

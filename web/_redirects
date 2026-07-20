@@ -1,0 +1,5 @@
+# Cloudflare Pages / Netlify SPA fallback
+# Any unknown path (including /terms, /privacy, /about, /cookies, /accessibility, /ai
+# and their /en variants) is served as /index.html, which boots the Flutter app.
+# GoRouter then reads the URL and routes to the appropriate page.
+/*    /index.html   200

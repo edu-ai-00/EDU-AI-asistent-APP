@@ -18,7 +18,12 @@ class AuthStorageKeys {
 class AuthInterceptor extends Interceptor {
   final AuthTokenStorage _tokens;
 
-  AuthInterceptor(this._tokens);
+  /// Called when an *authenticated* request 401s, so the app can perform a
+  /// full logout-to-login. Null-safe; wired from the provider layer.
+  final void Function()? _onUnauthorized;
+
+  AuthInterceptor(this._tokens, {void Function()? onUnauthorized})
+      : _onUnauthorized = onUnauthorized;
 
   @override
   void onRequest(RequestOptions options, RequestInterceptorHandler handler) {
@@ -38,6 +43,17 @@ class AuthInterceptor extends Interceptor {
     // 401 → token expired or revoked; clear local copy.
     if (err.response?.statusCode == 401) {
       _tokens.clearToken();
+
+      // Escalate to a full logout only when the failed request actually carried
+      // our bearer token (an authenticated session went invalid) and it wasn't
+      // the logout call itself. Unauthenticated endpoints (login, guest
+      // register, resolve-code) legitimately 401 on bad input and must not wipe
+      // the app.
+      final sentAuth = err.requestOptions.headers.containsKey('Authorization');
+      final isLogout = err.requestOptions.path.endsWith(ApiEndpoints.logout);
+      if (sentAuth && !isLogout) {
+        _onUnauthorized?.call();
+      }
     }
 
     handler.next(err);
@@ -72,10 +88,12 @@ class TokenRotationInterceptor extends Interceptor {
     final isLogoutCall = options.path.endsWith(ApiEndpoints.logout);
 
     if (!isRotateCall && !isLogoutCall && (_tokens.token ?? '').isNotEmpty) {
-      // Touch activity for any authenticated user-driven call (interceptor
-      // runs only for app-issued requests).
-      await _session.touchActivity();
-
+      // NOTE: do NOT touch activity here. This interceptor fires on every
+      // app-issued request, including automated background traffic (periodic
+      // SyncService, connectivity-triggered syncs, token rotation). Counting
+      // those as activity keeps resetting the idle clock so the 15-minute
+      // shared-device inactivity logout never fires (BR-9SAH2R). Genuine user
+      // activity is tracked by InactivityWatcher's pointer listener.
       if (_session.needsRotation()) {
         try {
           await _ensureRotated();
@@ -101,7 +119,8 @@ class TokenRotationInterceptor extends Interceptor {
       if (newToken != null && newToken.isNotEmpty) {
         await _tokens.setToken(newToken);
       }
-      await _session.applyFromAuthResponse(data);
+      // Rotation is automated, not user activity — don't reset the idle clock.
+      await _session.applyFromAuthResponse(data, markActive: false);
     }
   }
 }

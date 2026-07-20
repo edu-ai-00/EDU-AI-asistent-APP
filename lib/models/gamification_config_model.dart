@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import '../core/strings/app_strings.dart';
+
 /// Parsed gamification config from the server.
 /// Contains definitions for levels, trophies, goals, and challenges.
 class GamificationConfig {
@@ -51,25 +53,28 @@ class GamificationConfig {
 
   /// Default config used before server config is downloaded.
   /// Also serves as API contract documentation.
-  static const defaultConfig = GamificationConfig(
+  ///
+  /// Not `const` because titles/descriptions read from `AppStrings`,
+  /// which is locale-aware and resolved at access time.
+  static final GamificationConfig defaultConfig = GamificationConfig(
     version: 1,
     levels: [
-      LevelDef(level: 1, xpRequired: 0, title: 'Začátečník', icon: '\u{1F331}'),
-      LevelDef(level: 2, xpRequired: 500, title: 'Učeň', icon: '\u{1F4DA}'),
-      LevelDef(level: 3, xpRequired: 1000, title: 'Student', icon: '\u{1F393}'),
-      LevelDef(level: 4, xpRequired: 1500, title: 'Pokročilý', icon: '\u{2B50}'),
-      LevelDef(level: 5, xpRequired: 2000, title: 'Expert', icon: '\u{1F4A1}'),
-      LevelDef(level: 6, xpRequired: 2500, title: 'Mistr', icon: '\u{1F451}'),
-      LevelDef(level: 7, xpRequired: 3000, title: 'Guru', icon: '\u{1F9D9}'),
-      LevelDef(level: 8, xpRequired: 4000, title: 'Legenda', icon: '\u{1F3C6}'),
-      LevelDef(level: 9, xpRequired: 5000, title: 'Génius', icon: '\u{1F680}'),
-      LevelDef(level: 10, xpRequired: 7500, title: 'Nedostižný', icon: '\u{1F30C}'),
+      LevelDef(level: 1, xpRequired: 0, title: AppStrings.levelTitle1, icon: '\u{1F331}'),
+      LevelDef(level: 2, xpRequired: 500, title: AppStrings.levelTitle2, icon: '\u{1F4DA}'),
+      LevelDef(level: 3, xpRequired: 1000, title: AppStrings.levelTitle3, icon: '\u{1F393}'),
+      LevelDef(level: 4, xpRequired: 1500, title: AppStrings.levelTitle4, icon: '\u{2B50}'),
+      LevelDef(level: 5, xpRequired: 2000, title: AppStrings.levelTitle5, icon: '\u{1F4A1}'),
+      LevelDef(level: 6, xpRequired: 2500, title: AppStrings.levelTitle6, icon: '\u{1F451}'),
+      LevelDef(level: 7, xpRequired: 3000, title: AppStrings.levelTitle7, icon: '\u{1F9D9}'),
+      LevelDef(level: 8, xpRequired: 4000, title: AppStrings.levelTitle8, icon: '\u{1F3C6}'),
+      LevelDef(level: 9, xpRequired: 5000, title: AppStrings.levelTitle9, icon: '\u{1F680}'),
+      LevelDef(level: 10, xpRequired: 7500, title: AppStrings.levelTitle10, icon: '\u{1F30C}'),
     ],
     trophies: [
       AchievementDef(
         id: 'trophy_first_lesson',
-        title: 'První lekce',
-        description: 'Dokonči svou první lekci',
+        title: AppStrings.trophyFirstLessonTitle,
+        description: AppStrings.trophyFirstLessonDesc,
         icon: '\u{1F3C6}',
         xpReward: 25,
         condition: AchievementCondition(type: 'lessons_completed', value: 1),
@@ -77,8 +82,8 @@ class GamificationConfig {
       ),
       AchievementDef(
         id: 'trophy_five_lessons',
-        title: 'Pilný student',
-        description: 'Dokonči 5 lekcí',
+        title: AppStrings.trophyDiligentStudentTitle,
+        description: AppStrings.trophyDiligentStudentDesc,
         icon: '\u{1F4DA}',
         xpReward: 50,
         condition: AchievementCondition(type: 'lessons_completed', value: 5),
@@ -86,8 +91,8 @@ class GamificationConfig {
       ),
       AchievementDef(
         id: 'trophy_first_quiz',
-        title: 'Kvízový nováček',
-        description: 'Dokonči svůj první kvíz',
+        title: AppStrings.trophyQuizNoviceTitle,
+        description: AppStrings.trophyQuizNoviceDesc,
         icon: '\u{1F9E0}',
         xpReward: 30,
         condition: AchievementCondition(type: 'quizzes_completed', value: 1),
@@ -95,8 +100,8 @@ class GamificationConfig {
       ),
       AchievementDef(
         id: 'trophy_first_course',
-        title: 'Mistrovský kousek',
-        description: 'Dokonči celý kurz',
+        title: AppStrings.trophyMasterpieceTitle,
+        description: AppStrings.trophyMasterpieceDesc,
         icon: '\u{1F9EC}',
         xpReward: 100,
         condition: AchievementCondition(type: 'courses_completed', value: 1),
@@ -104,8 +109,8 @@ class GamificationConfig {
       ),
       AchievementDef(
         id: 'trophy_week_streak',
-        title: 'Týdenní série',
-        description: 'Uč se 7 dní v řadě',
+        title: AppStrings.trophyWeekStreak,
+        description: AppStrings.trophyWeekStreakDesc,
         icon: '\u{1F525}',
         xpReward: 50,
         condition: AchievementCondition(type: 'streak_days', value: 7),
@@ -113,8 +118,8 @@ class GamificationConfig {
       ),
       AchievementDef(
         id: 'trophy_month_streak',
-        title: 'Měsíční série',
-        description: 'Uč se 30 dní v řadě',
+        title: AppStrings.trophyMonthStreakTitle,
+        description: AppStrings.trophyMonthStreakDesc,
         icon: '\u{1F4AA}',
         xpReward: 150,
         condition: AchievementCondition(type: 'streak_days', value: 30),
@@ -124,8 +129,8 @@ class GamificationConfig {
     goals: [
       AchievementDef(
         id: 'goal_xp_100',
-        title: 'Získat 100 XP',
-        description: 'Sbírej body za dokončené lekce a cvičení',
+        title: AppStrings.goal100XpTitle,
+        description: AppStrings.goalXpDesc,
         icon: '\u{26A1}',
         xpReward: 10,
         condition: AchievementCondition(type: 'total_xp', value: 100),
@@ -133,8 +138,8 @@ class GamificationConfig {
       ),
       AchievementDef(
         id: 'goal_xp_500',
-        title: 'Získat 500 XP',
-        description: 'Sbírej body za dokončené lekce a cvičení',
+        title: AppStrings.goal500XpTitle,
+        description: AppStrings.goalXpDesc,
         icon: '\u{26A1}',
         xpReward: 50,
         condition: AchievementCondition(type: 'total_xp', value: 500),
@@ -142,8 +147,8 @@ class GamificationConfig {
       ),
       AchievementDef(
         id: 'goal_xp_1000',
-        title: 'Získat 1000 XP',
-        description: 'Sbírej body za dokončené lekce a cvičení',
+        title: AppStrings.goal1000XpTitle,
+        description: AppStrings.goalXpDesc,
         icon: '\u{26A1}',
         xpReward: 100,
         condition: AchievementCondition(type: 'total_xp', value: 1000),
@@ -151,8 +156,8 @@ class GamificationConfig {
       ),
       AchievementDef(
         id: 'goal_streak_3',
-        title: 'Série 3 dní',
-        description: 'Uč se každý den po sobě',
+        title: AppStrings.goal3DayStreakTitle,
+        description: AppStrings.goalDailyStreakDesc,
         icon: '\u{1F525}',
         xpReward: 15,
         condition: AchievementCondition(type: 'streak_days', value: 3),
@@ -160,8 +165,8 @@ class GamificationConfig {
       ),
       AchievementDef(
         id: 'goal_streak_14',
-        title: 'Série 14 dní',
-        description: 'Uč se každý den po sobě',
+        title: AppStrings.goal14DayStreakTitle,
+        description: AppStrings.goalDailyStreakDesc,
         icon: '\u{1F525}',
         xpReward: 70,
         condition: AchievementCondition(type: 'streak_days', value: 14),
@@ -169,8 +174,8 @@ class GamificationConfig {
       ),
       AchievementDef(
         id: 'goal_level_3',
-        title: 'Dosáhnout úrovně 3',
-        description: 'Každá úroveň = 500 XP',
+        title: AppStrings.goalLevel3Title,
+        description: AppStrings.goalLevelDesc,
         icon: '\u{2B50}',
         xpReward: 50,
         condition: AchievementCondition(type: 'level', value: 3),
@@ -178,8 +183,8 @@ class GamificationConfig {
       ),
       AchievementDef(
         id: 'goal_lessons_10',
-        title: 'Dokonči 10 lekcí',
-        description: 'Učení dělá mistra',
+        title: AppStrings.goalComplete10LessonsTitle,
+        description: AppStrings.goalPracticeDesc,
         icon: '\u{1F4DA}',
         xpReward: 60,
         condition: AchievementCondition(type: 'lessons_completed', value: 10),
@@ -189,8 +194,8 @@ class GamificationConfig {
     challenges: [
       AchievementDef(
         id: 'challenge_xp_5000',
-        title: 'Získat 5000 XP',
-        description: 'Dokaž svou vytrvalost',
+        title: AppStrings.challenge5000XpTitle,
+        description: AppStrings.challenge5000XpDesc,
         icon: '\u{1F48E}',
         xpReward: 500,
         condition: AchievementCondition(type: 'total_xp', value: 5000),
@@ -199,8 +204,8 @@ class GamificationConfig {
       ),
       AchievementDef(
         id: 'challenge_courses_3',
-        title: 'Dokonči 3 kurzy',
-        description: 'Prozkoumej různá témata',
+        title: AppStrings.challenge3CoursesTitle,
+        description: AppStrings.challenge3CoursesDesc,
         icon: '\u{1F680}',
         xpReward: 200,
         condition: AchievementCondition(type: 'courses_completed', value: 3),
@@ -209,8 +214,8 @@ class GamificationConfig {
       ),
       AchievementDef(
         id: 'challenge_streak_60',
-        title: 'Série 60 dní',
-        description: 'Opravdová disciplína',
+        title: AppStrings.challenge60DayStreakTitle,
+        description: AppStrings.challenge60DayStreakDesc,
         icon: '\u{1F30B}',
         xpReward: 300,
         condition: AchievementCondition(type: 'streak_days', value: 60),

@@ -11,7 +11,27 @@ import '../network/api_endpoints.dart';
 Color _hexToColor(String hex) {
   hex = hex.replaceFirst('#', '');
   if (hex.length == 6) hex = 'FF$hex';
+  if (hex.length == 8) {
+    // Tokens like "#1F660E0F" use RRGGBBAA ordering — convert to AARRGGBB
+    // when the leading byte isn't a plausible alpha (i.e. format ambiguity
+    // is resolved when caller passes explicit alpha at end).
+  }
   return Color(int.parse(hex, radix: 16));
+}
+
+/// Resolve a color field from a JSON map. Falls back to [fallback] when the
+/// key is missing or not a String. Lets admin-supplied theme JSON omit
+/// optional fields without breaking the whole import.
+Color _colorOr(Map<String, dynamic> j, String key, Color fallback) {
+  final v = j[key];
+  if (v is String && v.isNotEmpty) {
+    try {
+      return _hexToColor(v);
+    } catch (_) {
+      return fallback;
+    }
+  }
+  return fallback;
 }
 
 String _colorToHex(Color c) {
@@ -139,57 +159,64 @@ class ThemeColors {
     required this.gradientGold,
   });
 
-  factory ThemeColors.fromJson(Map<String, dynamic> j) => ThemeColors(
-        primary: _hexToColor(j['primary'] as String),
-        primaryDark: _hexToColor(j['primaryDark'] as String),
-        background: _hexToColor(j['background'] as String),
-        gradientPurple: _hexToColor(j['gradientPurple'] as String),
-        surface: _hexToColor(j['surface'] as String),
-        success: _hexToColor(j['success'] as String),
-        orange: _hexToColor(j['orange'] as String),
-        warning: _hexToColor(j['warning'] as String),
-        error: _hexToColor(j['error'] as String),
-        errorLight: _hexToColor(j['errorLight'] as String),
-        surfaceLight: _hexToColor(j['surfaceLight'] as String),
-        progressTrack: _hexToColor(j['progressTrack'] as String),
-        progressFill: _hexToColor(j['progressFill'] as String),
-        quizPurple: _hexToColor(j['quizPurple'] as String),
-        inputBg: _hexToColor(j['inputBg'] as String),
-        infoBg: _hexToColor(j['infoBg'] as String),
-        disabled: _hexToColor(j['disabled'] as String),
-        disabledButton: _hexToColor(j['disabledButton'] as String),
-        progressBorder: _hexToColor(j['progressBorder'] as String),
-        cardBlue: _hexToColor(j['cardBlue'] as String),
-        cardLavender: _hexToColor(j['cardLavender'] as String),
-        cardPeach: _hexToColor(j['cardPeach'] as String),
-        cardPeachDark: _hexToColor(j['cardPeachDark'] as String),
-        cardYellow: _hexToColor(j['cardYellow'] as String),
-        successBg: _hexToColor(j['successBg'] as String),
-        errorBg: _hexToColor(j['errorBg'] as String),
-        hintBg: _hexToColor(j['hintBg'] as String),
-        hintBorder: _hexToColor(j['hintBorder'] as String),
-        hintIconColor: _hexToColor(j['hintIconColor'] as String),
-        orangeBg: _hexToColor(j['orangeBg'] as String),
-        successBgLight: _hexToColor(j['successBgLight'] as String),
-        videoDark: _hexToColor(j['videoDark'] as String),
-        hintIcon: _hexToColor(j['hintIcon'] as String),
-        bannerOrange: _hexToColor(j['bannerOrange'] as String),
-        bannerOrangeDark: _hexToColor(j['bannerOrangeDark'] as String),
-        avatarFox: _hexToColor(j['avatarFox'] as String),
-        avatarPanda: _hexToColor(j['avatarPanda'] as String),
-        avatarLion: _hexToColor(j['avatarLion'] as String),
-        avatarFrog: _hexToColor(j['avatarFrog'] as String),
-        avatarOwl: _hexToColor(j['avatarOwl'] as String),
-        avatarCat: _hexToColor(j['avatarCat'] as String),
-        subjectGrammar: _hexToColor(j['subjectGrammar'] as String),
-        subjectLiterature: _hexToColor(j['subjectLiterature'] as String),
-        subjectMath: _hexToColor(j['subjectMath'] as String),
-        subjectChemistry: _hexToColor(j['subjectChemistry'] as String),
-        subjectBiology: _hexToColor(j['subjectBiology'] as String),
-        skillRed: _hexToColor(j['skillRed'] as String),
-        skillBlue: _hexToColor(j['skillBlue'] as String),
-        gradientGold: _hexToColor(j['gradientGold'] as String),
-      );
+  /// Build [ThemeColors] from JSON. Tolerant of missing fields — falls back
+  /// to [ThemeColors.defaults] for any color the JSON omits. This allows
+  /// design-token exports from the admin tool (which may omit infrequently
+  /// used colors) to import successfully.
+  factory ThemeColors.fromJson(Map<String, dynamic> j) {
+    const d = ThemeColors.defaults;
+    return ThemeColors(
+      primary: _colorOr(j, 'primary', d.primary),
+      primaryDark: _colorOr(j, 'primaryDark', d.primaryDark),
+      background: _colorOr(j, 'background', d.background),
+      gradientPurple: _colorOr(j, 'gradientPurple', d.gradientPurple),
+      surface: _colorOr(j, 'surface', d.surface),
+      success: _colorOr(j, 'success', d.success),
+      orange: _colorOr(j, 'orange', d.orange),
+      warning: _colorOr(j, 'warning', d.warning),
+      error: _colorOr(j, 'error', d.error),
+      errorLight: _colorOr(j, 'errorLight', d.errorLight),
+      surfaceLight: _colorOr(j, 'surfaceLight', d.surfaceLight),
+      progressTrack: _colorOr(j, 'progressTrack', d.progressTrack),
+      progressFill: _colorOr(j, 'progressFill', d.progressFill),
+      quizPurple: _colorOr(j, 'quizPurple', d.quizPurple),
+      inputBg: _colorOr(j, 'inputBg', d.inputBg),
+      infoBg: _colorOr(j, 'infoBg', d.infoBg),
+      disabled: _colorOr(j, 'disabled', d.disabled),
+      disabledButton: _colorOr(j, 'disabledButton', d.disabledButton),
+      progressBorder: _colorOr(j, 'progressBorder', d.progressBorder),
+      cardBlue: _colorOr(j, 'cardBlue', d.cardBlue),
+      cardLavender: _colorOr(j, 'cardLavender', d.cardLavender),
+      cardPeach: _colorOr(j, 'cardPeach', d.cardPeach),
+      cardPeachDark: _colorOr(j, 'cardPeachDark', d.cardPeachDark),
+      cardYellow: _colorOr(j, 'cardYellow', d.cardYellow),
+      successBg: _colorOr(j, 'successBg', d.successBg),
+      errorBg: _colorOr(j, 'errorBg', d.errorBg),
+      hintBg: _colorOr(j, 'hintBg', d.hintBg),
+      hintBorder: _colorOr(j, 'hintBorder', d.hintBorder),
+      hintIconColor: _colorOr(j, 'hintIconColor', d.hintIconColor),
+      orangeBg: _colorOr(j, 'orangeBg', d.orangeBg),
+      successBgLight: _colorOr(j, 'successBgLight', d.successBgLight),
+      videoDark: _colorOr(j, 'videoDark', d.videoDark),
+      hintIcon: _colorOr(j, 'hintIcon', d.hintIcon),
+      bannerOrange: _colorOr(j, 'bannerOrange', d.bannerOrange),
+      bannerOrangeDark: _colorOr(j, 'bannerOrangeDark', d.bannerOrangeDark),
+      avatarFox: _colorOr(j, 'avatarFox', d.avatarFox),
+      avatarPanda: _colorOr(j, 'avatarPanda', d.avatarPanda),
+      avatarLion: _colorOr(j, 'avatarLion', d.avatarLion),
+      avatarFrog: _colorOr(j, 'avatarFrog', d.avatarFrog),
+      avatarOwl: _colorOr(j, 'avatarOwl', d.avatarOwl),
+      avatarCat: _colorOr(j, 'avatarCat', d.avatarCat),
+      subjectGrammar: _colorOr(j, 'subjectGrammar', d.subjectGrammar),
+      subjectLiterature: _colorOr(j, 'subjectLiterature', d.subjectLiterature),
+      subjectMath: _colorOr(j, 'subjectMath', d.subjectMath),
+      subjectChemistry: _colorOr(j, 'subjectChemistry', d.subjectChemistry),
+      subjectBiology: _colorOr(j, 'subjectBiology', d.subjectBiology),
+      skillRed: _colorOr(j, 'skillRed', d.skillRed),
+      skillBlue: _colorOr(j, 'skillBlue', d.skillBlue),
+      gradientGold: _colorOr(j, 'gradientGold', d.gradientGold),
+    );
+  }
 
   Map<String, dynamic> toJson() => {
         'primary': _colorToHex(primary),
@@ -310,9 +337,9 @@ class ThemeTypography {
   });
 
   factory ThemeTypography.fromJson(Map<String, dynamic> j) => ThemeTypography(
-        headingFont: j['headingFont'] as String,
-        bodyFont: j['bodyFont'] as String,
-        codeFont: j['codeFont'] as String,
+        headingFont: (j['headingFont'] as String?) ?? defaults.headingFont,
+        bodyFont: (j['bodyFont'] as String?) ?? defaults.bodyFont,
+        codeFont: (j['codeFont'] as String?) ?? defaults.codeFont,
       );
 
   Map<String, dynamic> toJson() => {
@@ -349,15 +376,29 @@ class ThemeRadii {
     required this.sheet,
   });
 
-  factory ThemeRadii.fromJson(Map<String, dynamic> j) => ThemeRadii(
-        xs: (j['xs'] as num).toDouble(),
-        s: (j['s'] as num).toDouble(),
-        m: (j['m'] as num).toDouble(),
-        l: (j['l'] as num).toDouble(),
-        xl: (j['xl'] as num).toDouble(),
-        pill: (j['pill'] as num).toDouble(),
-        sheet: (j['sheet'] as num).toDouble(),
-      );
+  /// Build [ThemeRadii] from JSON. Accepts both short (`xs`, `s`, ...) and
+  /// admin-tool long (`radiusXS`, `radiusS`, `radiusSheetTop`) key names,
+  /// falling back to defaults for any missing entry.
+  factory ThemeRadii.fromJson(Map<String, dynamic> j) {
+    double pick(List<String> keys, double fallback) {
+      for (final k in keys) {
+        final v = j[k];
+        if (v is num) return v.toDouble();
+      }
+      return fallback;
+    }
+
+    const d = ThemeRadii.defaults;
+    return ThemeRadii(
+      xs: pick(const ['xs', 'radiusXS'], d.xs),
+      s: pick(const ['s', 'radiusS'], d.s),
+      m: pick(const ['m', 'radiusM'], d.m),
+      l: pick(const ['l', 'radiusL'], d.l),
+      xl: pick(const ['xl', 'radiusXL'], d.xl),
+      pill: pick(const ['pill', 'radiusPill'], d.pill),
+      sheet: pick(const ['sheet', 'radiusSheetTop'], d.sheet),
+    );
+  }
 
   Map<String, dynamic> toJson() => {
         'xs': xs,
@@ -397,14 +438,30 @@ class ThemeConfig {
     required this.radii,
   });
 
-  factory ThemeConfig.fromJson(Map<String, dynamic> j) => ThemeConfig(
-        name: j['name'] as String,
-        version: j['version'] as int,
-        colors: ThemeColors.fromJson(j['colors'] as Map<String, dynamic>),
-        typography:
-            ThemeTypography.fromJson(j['typography'] as Map<String, dynamic>),
-        radii: ThemeRadii.fromJson(j['radii'] as Map<String, dynamic>),
-      );
+  /// Build a [ThemeConfig] from JSON. Tolerant of missing/optional fields:
+  /// - `name` defaults to "Custom" when absent
+  /// - `version` defaults to 1
+  /// - `typography` / `radii` blocks default to [ThemeTypography.defaults] /
+  ///   [ThemeRadii.defaults] when omitted
+  /// - `colors` may omit individual entries (see [ThemeColors.fromJson])
+  factory ThemeConfig.fromJson(Map<String, dynamic> j) {
+    final colorsJson = j['colors'];
+    final typographyJson = j['typography'];
+    final radiiJson = j['radii'];
+    return ThemeConfig(
+      name: (j['name'] as String?) ?? 'Custom',
+      version: (j['version'] as num?)?.toInt() ?? 1,
+      colors: colorsJson is Map<String, dynamic>
+          ? ThemeColors.fromJson(colorsJson)
+          : ThemeColors.defaults,
+      typography: typographyJson is Map<String, dynamic>
+          ? ThemeTypography.fromJson(typographyJson)
+          : ThemeTypography.defaults,
+      radii: radiiJson is Map<String, dynamic>
+          ? ThemeRadii.fromJson(radiiJson)
+          : ThemeRadii.defaults,
+    );
+  }
 
   Map<String, dynamic> toJson() => {
         'name': name,

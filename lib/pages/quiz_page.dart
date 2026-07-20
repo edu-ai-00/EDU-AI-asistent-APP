@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_html/flutter_html.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:video_player/video_player.dart';
 
 import '../core/elo/elo_engine.dart';
 import '../data/repositories/user_course_repository.dart';
@@ -10,12 +11,15 @@ import '../core/network/api_endpoints.dart';
 import '../core/utils/image_url.dart';
 import '../core/providers/bookmark_provider.dart';
 import '../core/providers/core_providers.dart';
+import '../core/providers/practice_providers.dart';
+import '../core/practice/grade_calculator.dart';
 import '../core/sync/sync_queue.dart';
 import '../core/theme/app_theme.dart';
 import '../models/block_model.dart';
 import '../models/step_navigation.dart';
 import '../widgets/block_step_engine.dart';
 import '../widgets/markdown_latex_widget.dart';
+import '../widgets/step_content_renderer.dart';
 import '../core/strings/app_strings.dart';
 import 'package:eduai/core/util/silent_log.dart';
 import '../models/chat_models.dart';
@@ -53,6 +57,20 @@ class QuizPage extends ConsumerStatefulWidget {
   final QuizProgress? progress;
   final bool evaluate;
   final bool onlyOnce;
+  /// True when launched as an exercise (Cvičení) — affects ELO handling and
+  /// completion flow. False = full course quiz.
+  final bool isExercise;
+
+  /// True when launched as an FSRS practice session (from PracticePage).
+  /// Each answered block is graded and fed back into the FSRS scheduler
+  /// so the card is rescheduled.
+  final bool isFsrsPractice;
+
+  /// True for in-course/in-lesson "Procvičování" launches. Enables the display
+  /// self-rating bar (Nevím/Připomeň/Jde to/Pamatuji) and hides the AI-mentor
+  /// robot, matching the dashboard practice UX — WITHOUT switching question
+  /// blocks to full FSRS grading (that stays gated on [isFsrsPractice]).
+  final bool selfRateDisplayBlocks;
 
   const QuizPage({
     super.key,
@@ -62,6 +80,9 @@ class QuizPage extends ConsumerStatefulWidget {
     this.progress,
     this.evaluate = false,
     this.onlyOnce = false,
+    this.isExercise = false,
+    this.isFsrsPractice = false,
+    this.selfRateDisplayBlocks = false,
   });
 
   @override
@@ -69,6 +90,12 @@ class QuizPage extends ConsumerStatefulWidget {
 }
 
 class _QuizPageState extends ConsumerState<QuizPage> {
+  /// Whether display/content blocks are self-rated (four rating buttons) rather
+  /// than shown with a plain "Pokračovat" bar. True for both dashboard FSRS
+  /// practice and in-course/in-lesson "Procvičování".
+  bool get _selfRateDisplays =>
+      widget.isFsrsPractice || widget.selfRateDisplayBlocks;
+
   late final DateTime _startTime;
   late int _currentQuestionIndex;
   late int _correctAnswers;
@@ -87,6 +114,11 @@ class _QuizPageState extends ConsumerState<QuizPage> {
   // Timestamp when each question was answered (by index)
   final Map<int, DateTime> _answerTimestamps = {};
 
+  // Timestamp when each question was first shown (by index). Combined with
+  // _answerTimestamps this gives the per-block solve duration that the
+  // server records on `elo_interactions.opened_at` / `confirmed_at`.
+  final Map<int, DateTime> _questionOpenedAt = {};
+
   // Tracks hint/help usage per question index for ELO score penalty.
   // 0 = no hint, 1 = hint shown, 2 = help (detailed explanation) shown.
   final Map<int, int> _hintUsage = {};
@@ -98,8 +130,21 @@ class _QuizPageState extends ConsumerState<QuizPage> {
   // hot reloads, or retries. Once true, stays true for the page's lifetime.
   bool _hasSubmittedAttempt = false;
 
+  // FSRS practice session tally — accumulated as each card is reviewed and
+  // shown in the end-of-session summary (only meaningful when isFsrsPractice).
+  int _fsrsXpEarned = 0;
+  int _fsrsReviewedCount = 0;
+  int _fsrsCorrectCount = 0;
+
   /// Controller for V2 blocks — lets this page's bottom bar drive the engine.
   final BlockStepEngineController _engineController = BlockStepEngineController();
+
+  // Pooled video/audio players for FSRS-practice display cards. Display blocks
+  // in practice are rendered by this page (not BlockStepEngine), so they need
+  // their own controller pool to play step videos/audio instead of a static
+  // placeholder — same pattern as BlockStepEngine (BR-27DCT3).
+  final Map<String, VideoPlayerController> _videoControllers = {};
+  final Map<String, VideoPlayerController> _audioControllers = {};
 
   ContentBlock get _currentBlock => widget.questionBlocks[_currentQuestionIndex];
 
@@ -108,7 +153,7 @@ class _QuizPageState extends ConsumerState<QuizPage> {
 
   /// True unless this is an exercise launched from lesson_detail_page
   /// (which handles its own ELO). Quiz-only courses also get ELO.
-  bool get _isQuizMode => !widget.courseTitle.endsWith('Cvičení');
+  bool get _isQuizMode => !widget.isExercise;
 
   int get _totalCards => widget.questionBlocks.length;
   int get _totalQuestions => widget.questionBlocks.where((b) =>
@@ -120,6 +165,11 @@ class _QuizPageState extends ConsumerState<QuizPage> {
   void initState() {
     super.initState();
     _startTime = DateTime.now();
+    // Track active work time while this quiz is open (BR-9SAH2R).
+    ref.read(workTimeTrackerProvider).setLocation(
+          courseId: widget.courseId,
+          context: 'quiz',
+        );
     // Listen for V2 engine selection changes to update the bottom bar.
     _engineController.addListener(_onEngineControllerChanged);
     final p = widget.progress;
@@ -148,12 +198,26 @@ class _QuizPageState extends ConsumerState<QuizPage> {
       // and jumps when hydration completes.
       _hydrateFromDb();
     }
+    // Record opened_at for the question we land on (resumed or fresh).
+    _questionOpenedAt[_currentQuestionIndex] = DateTime.now().toUtc();
+  }
+
+  /// Mark `index` as opened (first reveal) for solve-time tracking. Safe to
+  /// call multiple times — only the first call wins so navigating back
+  /// doesn't reset the clock for a question already seen.
+  void _markQuestionOpened(int index) {
+    _questionOpenedAt.putIfAbsent(index, () => DateTime.now().toUtc());
   }
 
   /// Restore quiz state from user_courses.progressData (persisted by
   /// _persistPartialProgress). Lands on the first unanswered question so the
   /// student keeps practising where they left off.
   Future<void> _hydrateFromDb() async {
+    // FSRS practice spans multiple courses and reschedules cards via the FSRS
+    // card table, not the per-course quiz-resume store. Restoring from a
+    // course's progressData would pre-mark already-reviewed-but-still-due cards
+    // and skip them, launching fewer cards than the queue holds (BR-CNSK2C).
+    if (widget.isFsrsPractice) return;
     try {
       final user = ref.read(activeUserProvider).valueOrNull;
       if (user == null) return;
@@ -223,6 +287,7 @@ class _QuizPageState extends ConsumerState<QuizPage> {
         _correctAnswers = correctCount;
         _answeredQuestions = restoredAnswered.length;
         _currentQuestionIndex = target;
+        _markQuestionOpened(target);
         // Restore open-text controllers from selected_answer (open answers
         // get stored under selected_answer in _persistPartialProgress).
         for (final entry in restoredSelected.entries) {
@@ -239,6 +304,7 @@ class _QuizPageState extends ConsumerState<QuizPage> {
 
   @override
   void dispose() {
+    ref.read(workTimeTrackerProvider).clearLocation();
     _engineController.removeListener(_onEngineControllerChanged);
     _engineController.dispose();
     // Save progress back before disposing
@@ -246,7 +312,51 @@ class _QuizPageState extends ConsumerState<QuizPage> {
     for (final controller in _textControllers.values) {
       controller.dispose();
     }
+    _disposeMediaControllers();
     super.dispose();
+  }
+
+  void _disposeMediaControllers() {
+    for (final c in _videoControllers.values) {
+      c.dispose();
+    }
+    _videoControllers.clear();
+    for (final c in _audioControllers.values) {
+      c.dispose();
+    }
+    _audioControllers.clear();
+  }
+
+  VideoPlayerController? _getVideoController(String url) {
+    return _videoControllers.putIfAbsent(url, () {
+      final controller = VideoPlayerController.networkUrl(Uri.parse(url));
+      controller.addListener(() {
+        if (mounted) setState(() {});
+      });
+      controller.initialize().then((_) {
+        if (mounted) setState(() {});
+      }).catchError((e) {
+        debugPrint('[QuizPage] video init failed for $url: $e');
+        if (mounted) setState(() {});
+      });
+      return controller;
+    });
+  }
+
+  VideoPlayerController? _getAudioController(String url) {
+    return _audioControllers.putIfAbsent(url, () {
+      final controller = VideoPlayerController.networkUrl(Uri.parse(url));
+      controller.addListener(() {
+        if (mounted) setState(() {});
+      });
+      controller.initialize().then((_) {
+        if (mounted) setState(() {});
+      }).catchError((e) {
+        debugPrint('[QuizPage] audio init failed for $url: $e');
+        if (mounted) setState(() {});
+      });
+      return controller;
+    });
   }
 
   void _onEngineControllerChanged() {
@@ -257,7 +367,9 @@ class _QuizPageState extends ConsumerState<QuizPage> {
   Widget _buildCardActionButtons(int index) {
     final block = widget.questionBlocks[index];
     final showHint = block.hasHint;
-    final showMentor = widget.evaluate;
+    // Hide the AI-mentor robot in practice contexts (BR-ZDYA83); keep it for
+    // real course quizzes/exercises.
+    final showMentor = widget.evaluate && !_selfRateDisplays;
 
     if (!showHint && !showMentor) return const SizedBox.shrink();
 
@@ -420,6 +532,9 @@ class _QuizPageState extends ConsumerState<QuizPage> {
       if (isCorrect) _correctAnswers++;
     });
 
+    // Wrong atomic answer → seed a Practice (Cvičení) card, same as V2 blocks.
+    if (!isCorrect) _autoBookmarkOnWrong(block);
+
     // Update ELO for quiz mode — apply hint/help penalty
     double eloScore = isCorrect ? 1.0 : 0.0;
     final hintLevel = _hintUsage[_currentQuestionIndex] ?? 0;
@@ -429,6 +544,16 @@ class _QuizPageState extends ConsumerState<QuizPage> {
       eloScore = eloScore.clamp(0.0, 0.75);
     }
     _updateElo(block, eloScore);
+
+    // FSRS practice: grade this block and reschedule its card.
+    if (widget.isFsrsPractice) {
+      _recordFsrsReview(
+        block: block,
+        index: _currentQuestionIndex,
+        isCorrect: isCorrect,
+        hintLevel: hintLevel,
+      );
+    }
 
     // Persist partial quiz progress to DB + sync after each answer
     // so progress is recoverable on refresh or device switch.
@@ -446,7 +571,7 @@ class _QuizPageState extends ConsumerState<QuizPage> {
   /// (matches the manual bookmark click). No-op for non-exercise blocks
   /// or already-bookmarked blocks.
   Future<void> _autoBookmarkOnWrong(ContentBlock block) async {
-    if (block.type != BlockType.exercise) return;
+    if (!block.type.isInteractiveBlock) return;
     try {
       final db = ref.read(appDatabaseProvider);
       final localCourse = await db.getCourseByFieldCourseId(widget.courseId);
@@ -457,9 +582,165 @@ class _QuizPageState extends ConsumerState<QuizPage> {
     } catch (e, st) { silentLog('quiz_page:auto_bookmark', e, st); }
   }
 
+  /// Grade an answered block and feed it into the FSRS scheduler so the
+  /// matching practice card is rescheduled + a review log is written.
+  /// No-op when the block has no practice card. Fire-and-forget.
+  Future<void> _recordFsrsReview({
+    required ContentBlock block,
+    required int index,
+    required bool isCorrect,
+    required int hintLevel,
+    int? explicitRating,
+  }) async {
+    try {
+      final user = ref.read(activeUserProvider).valueOrNull;
+      if (user == null) return;
+
+      final repo = ref.read(practiceRepositoryProvider);
+      final card = await repo.getCardByBlock(user.id, block.blockId);
+      if (card == null) return;
+
+      final shownAt = _questionOpenedAt[index] ?? DateTime.now().toUtc();
+      final responseTimeSec =
+          DateTime.now().toUtc().difference(shownAt).inSeconds;
+
+      // Display/content cards are self-rated (explicitRating); answerable cards
+      // are graded automatically from correctness + hint usage + speed.
+      final rating = explicitRating ??
+          GradeCalculator.gradeExercise(
+            isCorrect: isCorrect,
+            usedHint: hintLevel == 1,
+            usedHelp: hintLevel >= 2,
+            responseTimeSec: responseTimeSec,
+            avgTimeSec: card.avgTimeSec,
+          );
+
+      final result = await ref.read(practiceServiceProvider).reviewCard(
+            card: card,
+            rating: rating,
+            shownAt: shownAt,
+            userId: user.id,
+          );
+
+      // The card was just rescheduled (new future dueDate). Invalidate the
+      // cached practice queue so the dashboard count drops and the NEXT launch
+      // recomputes a fresh queue that excludes just-reviewed cards, instead of
+      // replaying the same cached list from index 0 (BR-8SHZCR). Cascades to
+      // playablePracticeProvider and dueCardsCountProvider, which watch it.
+      ref.invalidate(practiceQueueProvider);
+
+      // Tally for the end-of-session summary. grade 3-4 = answered well.
+      if (mounted) {
+        setState(() {
+          _fsrsXpEarned += result.xpEarned;
+          _fsrsReviewedCount++;
+          if (rating >= 3) _fsrsCorrectCount++;
+        });
+      }
+    } catch (e, st) {
+      silentLog('quiz_page:fsrs_review', e, st);
+    }
+  }
+
+  /// Self-rating for display/content practice cards (no question to grade).
+  /// Maps the four buttons to FSRS ratings (Nevím=1 … Pamatuji=4), records the
+  /// review, then advances to the next card.
+  Future<void> _selfRateDisplay(int rating) async {
+    if (_isCurrentAnswered) return;
+    final block = _currentBlock;
+    final index = _currentQuestionIndex;
+    // "Připomeň" (rating 2) = "remind me": open the hint before continuing,
+    // if the block has one (BR-ZDYA83). The rating is still recorded after.
+    if (rating == 2 && block.hasHint) {
+      await _showHintBottomSheet(block);
+      if (!mounted) return;
+    }
+    setState(() {
+      _answeredFlags[index] = true;
+      _correctFlags[index] = rating >= 3;
+      _answerTimestamps[index] = DateTime.now();
+    });
+    await _recordFsrsReview(
+      block: block,
+      index: index,
+      isCorrect: rating >= 3,
+      hintLevel: 0,
+      explicitRating: rating,
+    );
+    if (mounted) _goToNextQuestion();
+  }
+
+  /// Bottom bar shown for a display/content card during FSRS practice: four
+  /// self-rating buttons (Nevím / Připomeň / Jde to / Pamatuji) in a 2×2 grid,
+  /// replacing the "Zkontrolovat" flow that only makes sense for questions.
+  Widget _buildSelfRateBottomBar() {
+    final options = <({String label, int rating, Color color})>[
+      (label: AppStrings.practiceRateAgain, rating: 1, color: AppColors.error),
+      (label: AppStrings.practiceRateHard, rating: 2, color: AppColors.orange),
+      (label: AppStrings.practiceRateGood, rating: 3, color: AppColors.primary),
+      (label: AppStrings.practiceRateEasy, rating: 4, color: AppColors.success),
+    ];
+
+    Widget btn(({String label, int rating, Color color}) o) => Expanded(
+          child: GestureDetector(
+            onTap: () => _selfRateDisplay(o.rating),
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              decoration: BoxDecoration(
+                color: o.color.withValues(alpha: 0.12),
+                borderRadius: AppDecorations.radiusS,
+                border: Border.all(color: o.color.withValues(alpha: 0.45)),
+              ),
+              child: Text(
+                o.label,
+                textAlign: TextAlign.center,
+                style: AppTextStyles.bodyBold(color: o.color),
+              ),
+            ),
+          ),
+        );
+
+    return Container(
+      padding: EdgeInsets.only(
+        left: 16,
+        right: 16,
+        top: 12,
+        bottom: MediaQuery.of(context).padding.bottom + 12,
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.primaryDark08,
+            blurRadius: 16,
+            offset: const Offset(0, -4),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            AppStrings.practiceRatePrompt,
+            style: AppTextStyles.bodySmall(color: AppColors.primaryDark64),
+          ),
+          const SizedBox(height: 10),
+          Row(children: [btn(options[0]), const SizedBox(width: 8), btn(options[1])]),
+          const SizedBox(height: 8),
+          Row(children: [btn(options[2]), const SizedBox(width: 8), btn(options[3])]),
+        ],
+      ),
+    );
+  }
+
   /// Save current quiz answer state to the user_course progressData
   /// so it can be restored on refresh or device switch.
   Future<void> _persistPartialProgress() async {
+    // FSRS practice must not write into a course's quiz-resume store: the queue
+    // spans multiple courses yet this keys everything to widget.courseId, which
+    // both corrupts that course's real resume state and causes practice to skip
+    // already-answered cards on the next launch (BR-CNSK2C).
+    if (widget.isFsrsPractice) return;
     try {
       final user = ref.read(activeUserProvider).valueOrNull;
       if (user == null) return;
@@ -511,6 +792,7 @@ class _QuizPageState extends ConsumerState<QuizPage> {
     if (_currentQuestionIndex < _totalCards - 1) {
       setState(() {
         _currentQuestionIndex++;
+        _markQuestionOpened(_currentQuestionIndex);
       });
     } else {
       // Quiz completed - show results
@@ -522,6 +804,7 @@ class _QuizPageState extends ConsumerState<QuizPage> {
     if (_currentQuestionIndex > 0) {
       setState(() {
         _currentQuestionIndex--;
+        _markQuestionOpened(_currentQuestionIndex);
         // For V2 blocks, reset answered state so the engine restores in
         // interactive mode and the user can re-confirm or change their answer.
         final block = widget.questionBlocks[_currentQuestionIndex];
@@ -534,6 +817,23 @@ class _QuizPageState extends ConsumerState<QuizPage> {
         }
       });
     }
+  }
+
+  /// Whether the saved V2 progress for [questionIndex] holds an actual pending
+  /// selection (option/multi/text). Used as a fallback for the engine
+  /// controller's pending state on first build; unlike a plain null-check it
+  /// returns false once an AGAIN retry has cleared the pick.
+  bool _v2HasSelection(int questionIndex) {
+    final progress = _v2Progress[questionIndex];
+    if (progress == null) return false;
+    for (final answer in progress.stepAnswers.values) {
+      if (answer.selectedOptionId != null ||
+          (answer.selectedOptionIds?.isNotEmpty ?? false) ||
+          (answer.textAnswer?.isNotEmpty ?? false)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /// Extract a human-readable answer string from V2 step progress.
@@ -644,8 +944,15 @@ class _QuizPageState extends ConsumerState<QuizPage> {
   }
 
   void _showResults() {
-    // Cvičení — just pop back to course detail, no completion dialog
-    if (widget.courseTitle.endsWith('Cvičení')) {
+    // FSRS practice runs with isExercise=true but should end with a session
+    // summary (success rate + XP), not a silent pop.
+    if (widget.isFsrsPractice) {
+      _submitAndShowCompletion();
+      return;
+    }
+
+    // Exercise — just pop back to course detail, no completion dialog
+    if (widget.isExercise) {
       Navigator.of(context).pop();
       return;
     }
@@ -727,8 +1034,9 @@ class _QuizPageState extends ConsumerState<QuizPage> {
   }
 
 
-  /// Show hint/help in a bottom sheet for the given block.
-  void _showHintBottomSheet(ContentBlock block) {
+  /// Show hint/help in a bottom sheet for the given block. Awaitable so callers
+  /// (e.g. the "Připomeň" self-rating) can continue once the sheet is dismissed.
+  Future<void> _showHintBottomSheet(ContentBlock block) async {
     final hint = block.currentHint;
     if (hint == null || hint.isEmpty) return;
 
@@ -750,7 +1058,7 @@ class _QuizPageState extends ConsumerState<QuizPage> {
     bool showHelp = false;
     final feedbackController = TextEditingController();
 
-    showModalBottomSheet(
+    await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
@@ -870,7 +1178,7 @@ class _QuizPageState extends ConsumerState<QuizPage> {
                               _buildFeedbackOption(
                                 icon: Icons.smart_toy_outlined,
                                 iconColor: AppColors.primary,
-                                label: 'Zeptat se AI',
+                                label: AppStrings.quizAskAi,
                                 isSelected: false,
                                 onTap: () {
                                   Navigator.of(context).pop();
@@ -932,19 +1240,17 @@ class _QuizPageState extends ConsumerState<QuizPage> {
                                 onTap: isEmpty
                                     ? null
                                     : () {
+                                        final studentMessage = feedbackController.text.trim();
                                         _enqueueFeedback(
                                           blockId: block.blockId,
                                           type: 'question',
-                                          message: feedbackController.text.trim(),
+                                          message: studentMessage,
                                         );
-                                        final messenger = ScaffoldMessenger.of(ctx);
                                         Navigator.of(ctx).pop();
-                                        messenger.showSnackBar(
-                                          SnackBar(
-                                            content: Text(AppStrings.lessonFeedbackThanks),
-                                            backgroundColor: AppColors.success,
-                                          ),
-                                        );
+                                        // Open the AI mentor with the block context and the
+                                        // student's clarifying question (parity with the
+                                        // in-lesson "Odeslat" flow in lesson_detail_page.dart).
+                                        _openChatWithContext(idx, studentMessage: studentMessage);
                                       },
                                 child: Container(
                                   width: double.infinity,
@@ -1019,7 +1325,7 @@ class _QuizPageState extends ConsumerState<QuizPage> {
   }
 
   /// Open AI chat with context about the current quiz block.
-  void _openChatWithContext(int index) {
+  void _openChatWithContext(int index, {String? studentMessage}) {
     final block = widget.questionBlocks[index];
     final courseName = widget.courseTitle;
 
@@ -1043,13 +1349,13 @@ class _QuizPageState extends ConsumerState<QuizPage> {
     if (block.atomicQuestion != null) {
       final q = block.atomicQuestion!;
       final optionTexts = q.options.map((o) => '- ${o.text}').join('\n');
-      questionInfo = 'Otázka s možnostmi:\n$optionTexts';
+      questionInfo = AppStrings.chatContextQuestionWithOptions(optionTexts);
     } else {
       for (final step in block.steps) {
         if (step.evaluationConfig != null) {
           final opts = step.evaluationConfig!.options.map((o) => '- ${o.text}').join('\n');
           if (opts.isNotEmpty) {
-            questionInfo = 'Otázka s možnostmi:\n$opts';
+            questionInfo = AppStrings.chatContextQuestionWithOptions(opts);
             break;
           }
         }
@@ -1057,14 +1363,15 @@ class _QuizPageState extends ConsumerState<QuizPage> {
     }
 
     final contextParts = <String>[
-      'Potřebuji pomoct s úlohou z kurzu "$courseName".',
+      AppStrings.chatContextHelpIntro(courseName),
       '',
-      if (blockContent.isNotEmpty) 'Obsah úlohy: ${blockContent.length > 400 ? '${blockContent.substring(0, 400)}...' : blockContent}',
+      if (blockContent.isNotEmpty) AppStrings.chatContextHelpTaskContent(blockContent.length > 400 ? '${blockContent.substring(0, 400)}...' : blockContent),
       if (questionInfo.isNotEmpty) questionInfo,
-      if (hint.isNotEmpty) 'Nápověda říká: $hint',
-      if (help.isNotEmpty) 'Podrobnější vysvětlení: $help',
+      if (hint.isNotEmpty) AppStrings.chatContextHelpHint(hint),
+      if (help.isNotEmpty) AppStrings.chatContextHelpDetail(help),
       '',
-      'Můžeš mi to prosím vysvětlit jinak?',
+      if (studentMessage != null && studentMessage.isNotEmpty) studentMessage,
+      AppStrings.chatContextFallbackPrompt,
     ];
     final contextMessage = contextParts.where((s) => s.isNotEmpty || contextParts.indexOf(s) == 1).join('\n');
 
@@ -1180,9 +1487,27 @@ class _QuizPageState extends ConsumerState<QuizPage> {
   Future<void> _submitAndShowCompletion() async {
     if (_hasSubmittedAttempt) return;
     _hasSubmittedAttempt = true;
-    await _submitQuizAttempt();
-    await _saveQuizProgressLocally();
-    await _awardQuizTrophy();
+    // Quiz-attempt submission / progress / trophy are course-quiz concerns —
+    // skip them for a cross-course FSRS practice session.
+    if (!widget.isFsrsPractice) {
+      await _submitQuizAttempt();
+      await _saveQuizProgressLocally();
+      await _awardQuizTrophy();
+    }
+
+    // FSRS practice: bank the XP accumulated across the session so it counts
+    // toward the user's level/daily XP (it was previously computed and dropped).
+    if (widget.isFsrsPractice && _fsrsXpEarned > 0) {
+      final user = ref.read(activeUserProvider).valueOrNull;
+      if (user != null) {
+        await ref.read(userStatsRepositoryProvider).awardXp(
+              userId: user.id,
+              rawXp: _fsrsXpEarned,
+              courseXpEarned: _fsrsXpEarned,
+            );
+      }
+    }
+
     ref.read(syncServiceProvider).sync();
     if (!mounted) return;
 
@@ -1204,7 +1529,11 @@ class _QuizPageState extends ConsumerState<QuizPage> {
       builder: (doneCtx) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: AppDecorations.radiusL),
         title: Text(
-          hasQuestions ? AppStrings.quizCompleted : AppStrings.quizReviewCompleted,
+          widget.isFsrsPractice
+              ? AppStrings.practiceCompleted
+              : hasQuestions
+                  ? AppStrings.quizCompleted
+                  : AppStrings.quizReviewCompleted,
           style: AppTextStyles.subtitle(),
         ),
         content: Column(
@@ -1245,6 +1574,38 @@ class _QuizPageState extends ConsumerState<QuizPage> {
                           : AppStrings.quizTryAgain,
               style: AppTextStyles.statSuffix(color: Colors.grey[600]),
             ),
+            // FSRS practice session summary — success rate + XP banked.
+            if (widget.isFsrsPractice) ...[
+              const SizedBox(height: 16),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(
+                  color: AppColors.successBg,
+                  borderRadius: AppDecorations.radiusM,
+                ),
+                child: Column(
+                  children: [
+                    Text(
+                      AppStrings.practiceSummarySuccess(
+                        _fsrsReviewedCount == 0
+                            ? 0
+                            : ((_fsrsCorrectCount / _fsrsReviewedCount) * 100)
+                                .round(),
+                      ),
+                      style:
+                          AppTextStyles.bodyBold(color: AppColors.primaryDark),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      AppStrings.practiceSummaryXp(_fsrsXpEarned),
+                      style: AppTextStyles.bodyBold(color: AppColors.success),
+                    ),
+                  ],
+                ),
+              ),
+            ],
             const SizedBox(height: 24),
             // Hotovo button
             SizedBox(
@@ -1348,6 +1709,12 @@ class _QuizPageState extends ConsumerState<QuizPage> {
         },
       );
 
+      final openedAt = _questionOpenedAt[_currentQuestionIndex];
+      final confirmedAt = (_answerTimestamps[_currentQuestionIndex] ?? DateTime.now()).toUtc();
+      final durationMs = openedAt != null
+          ? confirmedAt.difference(openedAt).inMilliseconds.clamp(0, 1 << 31)
+          : null;
+
       await syncQueue.enqueue(
         tableName: 'elo_interactions',
         recordId: 'elo-${DateTime.now().microsecondsSinceEpoch}',
@@ -1362,6 +1729,9 @@ class _QuizPageState extends ConsumerState<QuizPage> {
           'profil_elo_snapshot': result.profilElo,
           'elo_vector_snapshot': eloVector,
           'updated_indices': result.updatedIndices,
+          if (openedAt != null) 'opened_at': openedAt.toIso8601String(),
+          'confirmed_at': confirmedAt.toIso8601String(),
+          if (durationMs != null) 'duration_ms': durationMs,
         },
       );
     } catch (e, st) { silentLog('quiz_page', e, st); }
@@ -1369,13 +1739,28 @@ class _QuizPageState extends ConsumerState<QuizPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return PopScope(
+      // Once-only quizzes must lock on ANY exit (back button, gesture, dashboard),
+      // not only on the final Submit (BR-NRSAY3). Block the automatic pop and route
+      // it through the confirm+finalize handler. A finalized quiz pops freely.
+      canPop: !_isLockableQuiz || _hasSubmittedAttempt,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop) return;
+        final confirmed = await _confirmFinalExit();
+        if (confirmed != true) return;
+        await _finalizeQuizAndExit();
+      },
+      child: Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
         backgroundColor: AppColors.primaryDark,
         foregroundColor: Colors.white,
         title: Text(
-          widget.courseTitle.contains(AppStrings.quizExerciseTitle) ? AppStrings.quizExerciseTitle : AppStrings.quizTitle,
+          widget.isFsrsPractice
+              ? AppStrings.practiceTitle
+              : widget.isExercise
+                  ? AppStrings.quizExerciseTitle
+                  : AppStrings.quizTitle,
           style: AppTextStyles.subtitle(color: Colors.white),
         ),
         centerTitle: true,
@@ -1395,7 +1780,64 @@ class _QuizPageState extends ConsumerState<QuizPage> {
           _buildBottomBar(),
         ],
       ),
+      ),
     );
+  }
+
+  /// A once-only course quiz that must be locked after a single attempt.
+  /// Excludes exercises (re-playable practice) and FSRS practice sessions.
+  bool get _isLockableQuiz =>
+      widget.onlyOnce && !widget.isExercise && !widget.isFsrsPractice;
+
+  /// Confirmation shown when the user tries to leave a lockable quiz without
+  /// submitting. Returns true if the user chose to leave (and thus lock).
+  Future<bool?> _confirmFinalExit() {
+    return showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: AppDecorations.radiusL),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.warning_amber_rounded, size: 56, color: AppColors.orange),
+            const SizedBox(height: 16),
+            Text(
+              AppStrings.quizConfirmExitMessage,
+              style: AppTextStyles.statSuffix(),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(AppStrings.quizConfirmExitStay),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(
+              AppStrings.quizConfirmExitLeave,
+              style: AppTextStyles.buttonLarge(color: AppColors.error),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Finalize a lockable quiz on early exit: submit the attempt and mark it
+  /// completed (so it can never be re-launched), then pop(true) so the caller
+  /// runs its completion/PIN-block handling — identical outcome to Submit.
+  Future<void> _finalizeQuizAndExit() async {
+    if (!_hasSubmittedAttempt) {
+      _hasSubmittedAttempt = true;
+      if (!widget.isFsrsPractice) {
+        await _submitQuizAttempt();
+        await _saveQuizProgressLocally();
+      }
+    }
+    if (mounted) Navigator.of(context).pop(true);
   }
 
   Widget _buildProgressBar() {
@@ -1437,6 +1879,13 @@ class _QuizPageState extends ConsumerState<QuizPage> {
   Widget _buildQuestionCard() {
     final block = _currentBlock;
 
+    // FSRS practice: a display/content-TYPE block is read, not answered — render
+    // its content read-only (no step-check engine) so only the self-rating
+    // bottom bar drives it.
+    if (_selfRateDisplays && block.type.isDisplayBlock) {
+      return _buildDisplayPracticeCard(block);
+    }
+
     // Step-based blocks → delegate to BlockStepEngine in quizV2 mode
     if (block.hasV2Steps) {
       // For re-visiting: restore previous selection but mark as un-answered
@@ -1456,6 +1905,11 @@ class _QuizPageState extends ConsumerState<QuizPage> {
         );
       }
       return BlockStepEngine(
+        // Per-question key forces State recreation when navigating between
+        // questions, so each question reloads its own saved progress.
+        // Quiz blocks often share an empty block_id, so the engine's
+        // blockId-based re-init in didUpdateWidget can't be relied on.
+        key: ValueKey('quiz_v2_$_currentQuestionIndex'),
         block: block,
         exportMode: ExportMode.quizV2,
         hideEvaluation: !widget.evaluate,
@@ -1605,6 +2059,63 @@ class _QuizPageState extends ConsumerState<QuizPage> {
   }
 
   /// Build a display card for review content (non-question blocks)
+  /// Read-only render of a display/content block for FSRS self-rating. Shows
+  /// every text step's content (no per-step check/confirm engine); the four
+  /// self-rating buttons live in the bottom bar.
+  Widget _buildDisplayPracticeCard(ContentBlock block) {
+    final parts = <Widget>[];
+
+    void addContent(String raw) {
+      final c = raw.replaceAll(r'\n', '\n');
+      if (c.trim().isEmpty) return;
+      final hasHtml = c.contains('<') && c.contains('>');
+      final hasMarkdown = !hasHtml &&
+          (c.contains('**') ||
+              c.contains('##') ||
+              c.contains('```') ||
+              c.contains(r'$') ||
+              c.contains('!['));
+      if (parts.isNotEmpty) parts.add(const SizedBox(height: 16));
+      parts.add(_buildContentWidget(c, hasHtml, hasMarkdown));
+    }
+
+    if (block.steps.isNotEmpty) {
+      // Render each step exactly like the lesson view (StepContentRenderer):
+      // markdown, LaTeX, images, SVG, and playable video/audio — instead of the
+      // old text-only path that silently dropped step images/media (BR-27DCT3).
+      for (final step in block.steps) {
+        if (parts.isNotEmpty) parts.add(const SizedBox(height: 16));
+        parts.add(StepContentRenderer(
+          step: step,
+          getVideoController: _getVideoController,
+          getAudioController: _getAudioController,
+        ));
+      }
+    } else {
+      addContent(block.displayContent);
+    }
+    if (parts.isEmpty) addContent(block.displayContent);
+
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: AppDecorations.radiusL,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: parts,
+      ),
+    );
+  }
+
   Widget _buildDisplayCard(ContentBlock block, String content, bool hasHtml, bool hasMarkdown) {
     // Mark as "answered" (reviewed) for display blocks
     // This happens automatically when user sees the card
@@ -1654,7 +2165,8 @@ class _QuizPageState extends ConsumerState<QuizPage> {
             ),
           ],
 
-          // Action buttons
+          // Action buttons (self-rating for display cards lives in the bottom
+          // bar so it also covers engine-rendered multi-step display blocks).
           _buildCardActionButtons(_currentQuestionIndex),
         ],
       ),
@@ -1843,14 +2355,26 @@ class _QuizPageState extends ConsumerState<QuizPage> {
     final isDisplayBlock = block.atomicQuestion == null && !isV2Block;
     final isShowingSolution = isV2Block && _engineController.isShowingSolution;
 
-    // Display blocks can always proceed (no answer needed)
+    // FSRS practice: a display/content-TYPE block (display, content, motivation,
+    // learning, org) — even one built from V2 text steps — is self-rated, not
+    // checked. Show the four rating buttons instead of the "Zkontrolovat" flow.
+    if (_selfRateDisplays &&
+        block.type.isDisplayBlock &&
+        !_isCurrentAnswered) {
+      return _buildSelfRateBottomBar();
+    }
+
+    // Display blocks can always proceed (no answer needed).
     final canGoNext = isDisplayBlock || _isCurrentAnswered;
     final hasMultiSelection = (_selectedMultiAnswers[_currentQuestionIndex]?.isNotEmpty ?? false);
     // For V2 blocks, use the engine controller OR saved progress as fallback
     // (the controller may not have synced yet when the engine is first created).
+    // The fallback checks for an actual selection, not just non-null progress —
+    // after an AGAIN retry the pick is cleared but the progress entry remains,
+    // and treating that as checkable would leave the button wrongly enabled.
     final canCheck = !isDisplayBlock && !_isCurrentAnswered && !isShowingSolution &&
         (isV2Block
-            ? (_engineController.hasPendingAnswer || _v2Progress[_currentQuestionIndex] != null)
+            ? (_engineController.hasPendingAnswer || _v2HasSelection(_currentQuestionIndex))
             : (_selectedAnswers[_currentQuestionIndex] != null ||
                 hasMultiSelection ||
                 _getTextController(_currentQuestionIndex).text.isNotEmpty));
@@ -1862,9 +2386,18 @@ class _QuizPageState extends ConsumerState<QuizPage> {
     bool isEnabled;
 
     if (isShowingSolution) {
-      // Engine showing solution feedback — button continues past it
-      onTap = _engineController.continueAfterSolution;
-      label = AppStrings.actionContinue;
+      if (_engineController.isAgainRetry) {
+        // Wrong go_to=AGAIN answer: the engine keeps the pick marked incorrect
+        // with its feedback but reveals no solution — the button clears the
+        // pick for another attempt instead of continuing (matches the in-lesson
+        // engine, which renders its own "Zkusit znovu" button in this state).
+        onTap = _engineController.retryAgain;
+        label = AppStrings.engineTryAgain;
+      } else {
+        // Engine showing solution feedback — button continues past it
+        onTap = _engineController.continueAfterSolution;
+        label = AppStrings.actionContinue;
+      }
       isEnabled = true;
     } else if (canCheck) {
       onTap = isV2Block ? _engineController.confirm : _checkAnswer;

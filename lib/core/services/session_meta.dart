@@ -61,7 +61,14 @@ class SessionMeta {
   }
 
   /// Apply session metadata from a login/rotate response.
-  Future<void> applyFromAuthResponse(Map<String, dynamic> data) async {
+  ///
+  /// [markActive] records this as user activity (resets the idle clock). Pass
+  /// true for genuine logins; false for automated token rotation, which must
+  /// not keep a shared-device session alive on its own (BR-9SAH2R).
+  Future<void> applyFromAuthResponse(
+    Map<String, dynamic> data, {
+    bool markActive = true,
+  }) async {
     final shared = data['shared_device'] == true;
     await _prefs.setBool(_sharedKey, shared);
 
@@ -80,7 +87,7 @@ class SessionMeta {
     }
 
     if (shared) {
-      await touchActivity();
+      if (markActive) await touchActivity();
     } else {
       await _prefs.remove(_lastActiveAtKey);
     }
@@ -106,6 +113,18 @@ class SessionMeta {
     final last = lastActiveAt;
     if (last == null) return false;
     return DateTime.now().difference(last) >= inactivityLimit;
+  }
+
+  /// Time left before the shared-session idle logout fires, clamped to zero.
+  ///
+  /// Resets whenever [touchActivity] moves [lastActiveAt] forward, so a caller
+  /// polling this each second renders a live countdown that restarts on every
+  /// user action. Returns null for non-shared sessions (no countdown to show).
+  Duration? inactivityRemaining() {
+    if (!sharedDevice) return null;
+    final base = lastActiveAt ?? DateTime.now();
+    final remaining = inactivityLimit - DateTime.now().difference(base);
+    return remaining.isNegative ? Duration.zero : remaining;
   }
 
   /// True when shared session exceeded the hard cap from session start.

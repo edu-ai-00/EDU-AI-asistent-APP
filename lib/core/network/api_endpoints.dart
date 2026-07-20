@@ -43,7 +43,9 @@ class ApiEndpoints {
   static const String logout = '/api/logout';
 
   /// POST - Rotate access token. Preserves shared_device flag and
-  /// session_started_at; returns 401 when shared session exceeds 8h cap.
+  /// session_started_at by default; pass `shared_device` in the body to
+  /// change the session mode (e.g. convert shared → persistent). Returns 401
+  /// when a shared session exceeds the 8h cap.
   static const String authRefresh = '/api/auth/refresh';
 
   /// GET - Get authenticated user (requires auth).
@@ -51,6 +53,16 @@ class ApiEndpoints {
 
   /// PUT - Update user profile (name, avatar, etc.).
   static const String updateProfile = '/api/user/profile';
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // OAuth — native sign-in
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  static const String oauthApple = '/api/auth/apple';
+
+  static const String oauthGoogle = '/api/auth/google';
+
+  static const String oauthMicrosoft = '/api/auth/microsoft';
 
   // ═══════════════════════════════════════════════════════════════════════════
   // Courses
@@ -113,6 +125,14 @@ class ApiEndpoints {
   static const String quizAttempts = '/api/user/quiz-attempts';
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // Practice Cards (FSRS spaced repetition)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /// GET  - List the user's practice cards (supports ?since= for incremental pull).
+  /// POST - Bulk upsert practice cards (offline sync). Body: { cards: [...] }.
+  static const String userPracticeCards = '/api/user/practice-cards';
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // User Stats
   // ═══════════════════════════════════════════════════════════════════════════
 
@@ -160,6 +180,13 @@ class ApiEndpoints {
 
   /// POST - Batch log ELO interactions (offline sync).
   static const String eloInteractionsBatch = '/api/elo/interactions/batch';
+
+  /// GET - Canonical GPF vector dimension labels (Czech), 35 rows.
+  static const String gpfDimensions = '/api/gpf/dimensions';
+
+  /// POST - Batch-ingest work-time activity heartbeats (BR-9SAH2R).
+  /// Body: { heartbeats: [ { client_uuid, course_id, lesson_id?, occurred_at } ] }
+  static const String workHeartbeats = '/api/work/heartbeats';
 
   /// GET - Get block stats (item_pocet). Supports ?block_ids=id1,id2 filter.
   static const String blockStats = '/api/blocks/stats';
@@ -232,4 +259,17 @@ class ApiEndpoints {
 
   /// PUT - Update feedback on a message.
   static String chatMessageFeedback(int messageId) => '/api/chat/messages/$messageId/feedback';
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // News (Novinky)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /// GET - List news items (with unread_count in meta).
+  static const String news = '/api/news';
+
+  /// GET - Get a single news item (includes markdown body).
+  static String newsItem(int id) => '/api/news/$id';
+
+  /// POST - Mark a news item as read (returns updated unread_count).
+  static String newsRead(int id) => '/api/news/$id/read';
 }

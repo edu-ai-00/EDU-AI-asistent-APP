@@ -4,6 +4,7 @@ import '../services/auth_token_storage.dart';
 import '../services/session_meta.dart';
 import 'api_endpoints.dart';
 import 'api_interceptors.dart';
+import 'oauth_api_port.dart';
 
 /// Result wrapper for API responses.
 class ApiResult<T> {
@@ -24,10 +25,16 @@ class ApiResult<T> {
 }
 
 /// Configured Dio client for API communication.
-class ApiClient {
+class ApiClient implements OAuthApiPort {
   late final Dio _dio;
   final AuthTokenStorage _tokens;
   final SessionMeta? _session;
+
+  /// Invoked when an authenticated request comes back 401 (token expired or
+  /// revoked server-side). Set by the provider layer to trigger a full
+  /// logout-to-login so the app never lingers in a half-authenticated state.
+  /// Late-bound because the coordinator depends on this client.
+  void Function()? onUnauthorized;
 
   ApiClient(
     this._tokens, {
@@ -57,7 +64,10 @@ class ApiClient {
         session: session,
       ));
     }
-    _dio.interceptors.add(AuthInterceptor(_tokens));
+    _dio.interceptors.add(AuthInterceptor(
+      _tokens,
+      onUnauthorized: () => onUnauthorized?.call(),
+    ));
     _dio.interceptors.add(RetryInterceptor(_dio));
 
     if (enableLogging) {
@@ -121,6 +131,35 @@ class ApiClient {
       return _handleError(e);
     } catch (e) {
       return ApiResult.failure(e.toString());
+    }
+  }
+
+  /// Convert the current shared-device session into a persistent one
+  /// ("this is my device", BR-CAQQW2). Re-issues the token via the refresh
+  /// endpoint with an explicit `shared_device: false`, so the server drops the
+  /// shared flag and grants a 30-day token. On success the new token and
+  /// session metadata are stored, and the pre-login default for this device is
+  /// switched to persistent so future logins stay signed in. Returns true on
+  /// success.
+  Future<bool> convertSessionToPersistent() async {
+    try {
+      final response = await _dio.post(
+        ApiEndpoints.authRefresh,
+        data: {'shared_device': false},
+      );
+      final data = response.data;
+      if (data is! Map<String, dynamic>) return false;
+
+      final newToken = data['token'] as String?;
+      if (newToken != null && newToken.isNotEmpty) {
+        await _tokens.setToken(newToken);
+      }
+      // Genuine user action — mark active so any residual idle state is reset.
+      await _session?.applyFromAuthResponse(data);
+      await _session?.setPendingSharedDevice(false);
+      return (data['shared_device'] as bool?) == false;
+    } catch (_) {
+      return false;
     }
   }
 

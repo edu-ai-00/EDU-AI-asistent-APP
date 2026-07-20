@@ -8,6 +8,8 @@
 // unit-tested without a Flutter environment.
 import 'dart:math';
 
+import '../strings/app_strings.dart';
+
 // ─── Domain summary ─────────────────────────────────────────────────────────
 
 /// Aggregated ELO summary for a single GPF domain.
@@ -62,8 +64,8 @@ class DomainSummary {
 /// Computes confidence intervals for domain-level ELO summaries.
 class ConfidenceCalculator {
   /// Message returned when a domain has no eligible dimensions.
-  static const String _insufficientDataMessage =
-      'Na odhad v této oblasti zatím nemáme dost údajů.';
+  /// Resolved at call time so the locale switcher works.
+  static String get _insufficientDataMessage => AppStrings.eloInsufficientData;
 
   /// Computes a [DomainSummary] for a single GPF domain.
   ///
@@ -136,19 +138,19 @@ class ConfidenceCalculator {
     );
   }
 
-  /// Returns a Czech confidence label based on median interaction count.
+  /// Returns a localized confidence label based on median interaction count.
   ///
-  /// - 30+   → "vyšší"
-  /// - 20–29 → "střední"
-  /// - 5–19  → "nižší"
-  /// - <5    → "velmi nízká"
+  /// - 30+   → "higher"
+  /// - 20–29 → "medium"
+  /// - 5–19  → "lower"
+  /// - <5    → "very low"
   /// - null  → null
   static String? confidenceLabel(double? medianCount) {
     if (medianCount == null) return null;
-    if (medianCount >= 30) return 'vyšší';
-    if (medianCount >= 20) return 'střední';
-    if (medianCount >= 5) return 'nižší';
-    return 'velmi nízká';
+    if (medianCount >= 30) return AppStrings.confidenceHigher;
+    if (medianCount >= 20) return AppStrings.confidenceMedium;
+    if (medianCount >= 5) return AppStrings.confidenceLower;
+    return AppStrings.confidenceVeryLow;
   }
 
   // ─── Helpers ──────────────────────────────────────────────────────────────

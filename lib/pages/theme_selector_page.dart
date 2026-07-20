@@ -210,9 +210,9 @@ class _ThemeSelectorPageState extends State<ThemeSelectorPage> {
                             as Map<String, dynamic>;
                         final config = ThemeConfig.fromJson(json);
                         Navigator.pop(ctx, config);
-                      } catch (_) {
-                        setSheetState(
-                            () => errorText = AppStrings.themeImportError);
+                      } catch (e) {
+                        setSheetState(() =>
+                            errorText = '${AppStrings.themeImportError}: $e');
                       }
                     },
                     child: Container(

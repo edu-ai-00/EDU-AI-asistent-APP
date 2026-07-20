@@ -1,9 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/strings/app_strings.dart';
 import '../core/theme/app_theme.dart';
 import '../core/providers/core_providers.dart';
 import '../core/providers/bookmark_provider.dart';
+import '../core/services/course_enroll_service.dart';
+import '../routing/deep_link.dart';
+import 'course_detail_page.dart';
 import '../data/repositories/user_stats_repository.dart';
 import '../features/email_validation/presentation/email_validation_banner.dart';
 import '../features/email_validation/providers/email_validation_providers.dart';
@@ -35,18 +40,112 @@ class MainScreen extends ConsumerStatefulWidget {
   ConsumerState<MainScreen> createState() => _MainScreenState();
 }
 
-class _MainScreenState extends ConsumerState<MainScreen> {
+class _MainScreenState extends ConsumerState<MainScreen>
+    with WidgetsBindingObserver {
   int _selectedIndex = 0;
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   /// Quiz progress cache keyed by courseId — survives quiz page pop/re-push.
   final Map<String, QuizProgress> _quizProgressCache = {};
 
+  /// Index of the Novinky (news) tab in [pages] / the bottom nav.
+  static const int _newsTabIndex = 4;
+
+  /// How often to poll the server for news while the app is in the foreground.
+  /// Lightweight stand-in for push until real notifications exist.
+  static const Duration _newsPollInterval = Duration(seconds: 60);
+
+  Timer? _newsPollTimer;
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _initBookmarks();
     _seedBundledCourses();
+    // Populate the news badge on launch.
+    ref.read(unreadNewsCountProvider.notifier).refresh();
+    _startNewsPolling();
+    // Open a course that arrived via a /course|/pin deep link, now that the app
+    // is authenticated and on the main screen.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _consumePendingDeepLink());
+  }
+
+  @override
+  void dispose() {
+    _newsPollTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // Foreground again — pull the latest news and resume polling.
+      _refreshNews();
+      _startNewsPolling();
+    } else if (state == AppLifecycleState.paused) {
+      // Backgrounded — stop polling to avoid needless requests.
+      _newsPollTimer?.cancel();
+    }
+  }
+
+  /// (Re)start the foreground news poll timer.
+  void _startNewsPolling() {
+    _newsPollTimer?.cancel();
+    _newsPollTimer = Timer.periodic(_newsPollInterval, (_) => _refreshNews());
+  }
+
+  /// Refresh news state: update the unread badge (works on any tab) and
+  /// invalidate the cached list so a visible Novinky tab refetches.
+  void _refreshNews() {
+    if (!mounted) return;
+    ref.read(unreadNewsCountProvider.notifier).refresh();
+    ref.invalidate(newsListProvider);
+  }
+
+  Future<void> _consumePendingDeepLink() async {
+    final code = ref.read(pendingDeepLinkCodeProvider);
+    if (code == null || code.isEmpty) return;
+    // Consume once so it doesn't reopen on later rebuilds.
+    ref.read(pendingDeepLinkCodeProvider.notifier).state = null;
+
+    final outcome = await enrollCourseByCode(ref, code);
+    if (!mounted) return;
+
+    if (!outcome.isSuccess) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_deepLinkErrorText(outcome))),
+      );
+      return;
+    }
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => CourseDetailPage(
+          course: outcome.course!,
+          userCourseId: outcome.userCourseId,
+        ),
+      ),
+    );
+  }
+
+  String _deepLinkErrorText(EnrollOutcome outcome) {
+    switch (outcome.error) {
+      case EnrollErrorKind.notFound:
+        return AppStrings.libraryCodeNotFound(outcome.code);
+      case EnrollErrorKind.loginRequired:
+        return AppStrings.libraryLoginRequired;
+      case EnrollErrorKind.alreadyCompleted:
+        return AppStrings.libraryCourseAlreadyCompleted;
+      case EnrollErrorKind.loadError:
+        return AppStrings.libraryLoadError;
+      case EnrollErrorKind.codeShort:
+        return AppStrings.libraryCodeShort;
+      case EnrollErrorKind.generic:
+      case null:
+        return AppStrings.genericError(outcome.message ?? '');
+    }
   }
 
   Future<void> _initBookmarks() async {
@@ -76,6 +175,11 @@ class _MainScreenState extends ConsumerState<MainScreen> {
   }
 
   void _onItemTapped(int index) {
+    // Opening the Novinky tab: drop the cached list so it refetches and shows
+    // anything published since the last fetch.
+    if (index == _newsTabIndex) {
+      _refreshNews();
+    }
     setState(() {
       _selectedIndex = index;
     });
@@ -260,14 +364,17 @@ class _MainScreenState extends ConsumerState<MainScreen> {
         body: Column(
           children: [
             // const SyncStatusBanner(),
+            SizedBox(height: MediaQuery.of(context).padding.top),
             if (isShared)
               SharedDeviceBanner(
                 onLogout: () => widget.onLogout?.call(),
-              )
-            else if (showBanner)
-              const EmailValidationBanner()
-            else
-              SizedBox(height: MediaQuery.of(context).padding.top),
+                // Rebuild so the banner re-reads the now-cleared shared flag
+                // and hides itself after "this is my device".
+                onConverted: () {
+                  if (mounted) setState(() {});
+                },
+              ),
+            if (showBanner) const EmailValidationBanner(),
             Expanded(
               child: MediaQuery.removePadding(
                 context: context,

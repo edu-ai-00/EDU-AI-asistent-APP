@@ -1242,7 +1242,7 @@ class _CourseDetailPageState extends ConsumerState<CourseDetailPage> with RouteA
             Icon(Icons.play_arrow_rounded, color: Colors.white, size: 24),
             const SizedBox(width: 6),
             Text(
-              'Lekce',
+              AppStrings.courseActionLessons,
               style: AppTextStyles.statValue(color: Colors.white),
             ),
           ],
@@ -1359,7 +1359,7 @@ class _CourseDetailPageState extends ConsumerState<CourseDetailPage> with RouteA
               Icon(Icons.play_arrow_rounded, color: Colors.white, size: 24),
               const SizedBox(width: 6),
               Text(
-                'Lekce',
+                AppStrings.courseActionLessons,
                 style: AppTextStyles.statValue(color: Colors.white),
               ),
             ],
@@ -1559,11 +1559,15 @@ class _CourseDetailPageState extends ConsumerState<CourseDetailPage> with RouteA
       MaterialPageRoute(
         builder: (context) => QuizPage(
           questionBlocks: exerciseBlocks,
-          courseTitle: AppStrings.courseExerciseSuffix(_course.title),
+          courseTitle: _course.title,
           courseId: _course.id,
           progress: _exerciseProgress,
           onlyOnce: _course.onlyOnce,
           evaluate: true,
+          isExercise: true,
+          // In-lesson practice mirrors the dashboard practice UX: display
+          // self-rating bar + hint on "Připomeň" + no mentor robot (BR-ZDYA83).
+          selfRateDisplayBlocks: true,
         ),
       ),
     );

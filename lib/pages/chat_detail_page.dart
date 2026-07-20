@@ -171,7 +171,7 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
                   const Icon(Icons.wifi_off, size: 18, color: Colors.white),
                   const SizedBox(width: 8),
                   Text(
-                    'Nejsi online — historie je dostupná, ale nové zprávy nelze odeslat',
+                    AppStrings.chatDetailOfflineBanner,
                     style: AppTextStyles.caption(color: Colors.white),
                   ),
                 ],
@@ -202,7 +202,7 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
                 );
               },
               loading: () => const Center(child: CircularProgressIndicator()),
-              error: (e, _) => Center(child: Text('Error: $e')),
+              error: (e, _) => Center(child: Text(AppStrings.genericError(e.toString()))),
             ),
           ),
           // Input bar

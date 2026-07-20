@@ -213,11 +213,22 @@ class ChatRepository {
             syncStatus: const Value('synced'),
           ));
         } else {
-          // Update title and last_message_at if server has newer data
+          // Re-key to the active user. After logout + re-login the local
+          // user gets a fresh uuid; the session row still carries the old
+          // uuid, so watchSessions(currentUserId) would hide it (chat
+          // "disappears"). The server is the source of truth for ownership,
+          // so claim every server-known session for the current user —
+          // mirrors how progress restore writes userId unconditionally.
           final serverTitle = s['title'] as String? ?? '';
-          if (serverTitle.isNotEmpty && serverTitle != existing.title) {
-            await _local.updateSessionTitle(existing.id, serverTitle);
-          }
+          await _local.updateSession(
+            existing.id,
+            ChatSessionsTableCompanion(
+              userId: Value(userId),
+              title: serverTitle.isNotEmpty && serverTitle != existing.title
+                  ? Value(serverTitle)
+                  : const Value.absent(),
+            ),
+          );
         }
       }
     }

@@ -697,12 +697,12 @@ class _SkillsSectionContent extends StatefulWidget {
 class _SkillsSectionContentState extends State<_SkillsSectionContent> {
   int _selectedTab = 0;
 
-  static const _tabs = [
-    AppStrings.skillTabAll,
-    AppStrings.skillTabBeginner,
-    AppStrings.skillTabIntermediate,
-    AppStrings.skillTabExpert,
-  ];
+  List<String> get _tabs => [
+        AppStrings.skillTabAll,
+        AppStrings.skillTabBeginner,
+        AppStrings.skillTabIntermediate,
+        AppStrings.skillTabExpert,
+      ];
 
   static const _tabToDifficulty = {
     1: 'beginner',

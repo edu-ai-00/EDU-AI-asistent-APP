@@ -9,6 +9,7 @@ import 'package:flutter_html/flutter_html.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:video_player/video_player.dart';
 import '../core/utils/image_url.dart';
+import '../core/utils/content_embeds.dart';
 
 import '../core/strings/app_strings.dart';
 import '../core/theme/app_theme.dart';
@@ -23,6 +24,7 @@ class StepContentRenderer extends StatelessWidget {
   final bool showSolution;  // Whether we're in SHOWING_SOLUTION state
   final bool hideResults;   // When true, suppress correct/incorrect highlighting on option cards
   final bool hideFeedback;  // When true, suppress feedback banners and solution text
+  final bool revealCorrectAnswer; // When false, mark the wrong pick but don't reveal the correct one (AGAIN retry)
 
   // Callbacks
   final void Function(String optionId)? onOptionSelected;
@@ -44,6 +46,7 @@ class StepContentRenderer extends StatelessWidget {
     this.showSolution = false,
     this.hideResults = false,
     this.hideFeedback = false,
+    this.revealCorrectAnswer = true,
     this.onOptionSelected,
     this.onMultipleOptionsSelected,
     this.onTextAnswerChanged,
@@ -248,7 +251,7 @@ class StepContentRenderer extends StatelessWidget {
               ? AppColors.success.withValues(alpha: 0.1)
               : AppColors.error.withValues(alpha: 0.1);
           borderColor = isCorrect ? AppColors.success : AppColors.error;
-        } else if (isCorrect) {
+        } else if (isCorrect && revealCorrectAnswer) {
           // Highlight correct answer too
           bgColor = AppColors.success.withValues(alpha: 0.05);
           borderColor = AppColors.success.withValues(alpha: 0.5);
@@ -481,7 +484,7 @@ class StepContentRenderer extends StatelessWidget {
         onChanged: (value) => onTextAnswerChanged?.call(value),
         onSubmitted: (_) => onTextAnswerSubmitted?.call(),
       ),
-      if (isAnswered && !isCorrect && !hideResults && config.correctAnswer != null) ...[
+      if (isAnswered && !isCorrect && !hideResults && revealCorrectAnswer && config.correctAnswer != null) ...[
         const SizedBox(height: 12),
         Text(
           AppStrings.stepCorrectAnswer(config.correctAnswer!),
@@ -805,8 +808,28 @@ class StepContentRenderer extends StatelessWidget {
 
   // ─── Shared Helpers ──────────────────────────────────────
 
-  /// Render rich content: tries markdown first, then HTML, then plain text.
+  /// Render rich content. Extracts inline <video> embeds first, then renders
+  /// the remaining text segments as markdown/HTML in document order.
   Widget _buildRichContent(String text, String? html, bool isMarkdown) {
+    if (hasVideoEmbed(text)) {
+      final parts = parseContentEmbeds(text);
+      final children = <Widget>[];
+      for (final part in parts) {
+        if (children.isNotEmpty) children.add(const SizedBox(height: 12));
+        if (part is VideoPart) {
+          children.add(_buildStepVideoUrl(part.url));
+        } else if (part is TextPart) {
+          // Recompute markdown detection per segment (html not applicable here).
+          children.add(_buildTextBody(part.text, null, _looksLikeMarkdown(part.text)));
+        }
+      }
+      return Column(crossAxisAlignment: CrossAxisAlignment.start, children: children);
+    }
+    return _buildTextBody(text, html, isMarkdown);
+  }
+
+  /// Render a single text segment: markdown first, then HTML, then plain text.
+  Widget _buildTextBody(String text, String? html, bool isMarkdown) {
     if (isMarkdown) {
       return MarkdownLatexWidget(
         content: text,
@@ -922,14 +945,21 @@ class StepContentRenderer extends StatelessWidget {
       videoUrl = step.content!.videoUrl;
     }
     if (videoUrl == null || videoUrl.isEmpty) return const SizedBox.shrink();
+    return _buildStepVideoUrl(videoUrl);
+  }
 
-    // Use parent-provided controller if available
-    final controller = getVideoController?.call(videoUrl);
+  /// Build a video player for an explicit [url] (used by both the dedicated
+  /// video step and inline <video> embeds extracted from text content).
+  Widget _buildStepVideoUrl(String url) {
+    if (url.isEmpty) return const SizedBox.shrink();
+
+    // Use parent-provided pooled controller if available
+    final controller = getVideoController?.call(url);
     if (controller != null) {
       return _buildVideoPlayer(controller);
     }
 
-    // Fallback: show a placeholder with the URL
+    // Fallback: show a placeholder
     return ClipRRect(
       borderRadius: AppDecorations.radiusM,
       child: Container(

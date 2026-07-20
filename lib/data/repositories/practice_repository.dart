@@ -2,7 +2,7 @@ import 'package:drift/drift.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../core/database/app_database.dart';
-import '../../models/block_model.dart';
+import '../../models/course_model.dart';
 
 const _uuid = Uuid();
 
@@ -151,6 +151,31 @@ class PracticeRepository {
         sourceType: 'lesson',
       );
       if (card != null) created++;
+    }
+    return created;
+  }
+
+  /// Seed practice cards for EVERY default_practice block of a course,
+  /// independent of lesson-completion state, so the full admin-configured set
+  /// is practiceable after login — not just the blocks completed in the prior
+  /// (guest) session. Idempotent: [createCardFromBlock] no-ops on blocks that
+  /// already have an active card. Returns the count of newly created cards.
+  ///
+  /// Note: this deliberately drops the "only completed blocks" gating that the
+  /// per-lesson completion path relies on (see [Course.getDefaultPracticeBlocks]
+  /// `completedBlockIds`). Introduced for BR-WR4C8P.
+  Future<int> seedCardsFromCourse({
+    required String userId,
+    required Course course,
+  }) async {
+    int created = 0;
+    for (final lesson in course.lessons) {
+      created += await createCardsFromLesson(
+        userId: userId,
+        courseId: course.id,
+        lessonId: lesson.id,
+        blocks: course.getBlocksForLesson(lesson.id),
+      );
     }
     return created;
   }

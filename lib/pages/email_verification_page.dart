@@ -145,6 +145,28 @@ class _EmailVerificationPageState extends ConsumerState<EmailVerificationPage> {
   String get _pin => _pinControllers.map((c) => c.text).join();
 
   void _onPinChanged(int index, String value) {
+    // Paste handling — user pasted the whole 6-digit code into one field.
+    // Without this branch Flutter's built-in maxLength would truncate the
+    // paste to a single character. The formatter accepts up to 6 chars
+    // so we can detect and distribute the paste here.
+    if (value.length > 1) {
+      final chars = value.split('').take(6 - index).toList();
+      for (var i = 0; i < chars.length; i++) {
+        _pinControllers[index + i].value = TextEditingValue(
+          text: chars[i],
+          selection: const TextSelection.collapsed(offset: 1),
+        );
+      }
+      final lastFilled = (index + chars.length - 1).clamp(0, 5);
+      final nextFocus = (lastFilled + 1).clamp(0, 5);
+      _focusNodes[nextFocus].requestFocus();
+      setState(() {});
+      if (_pin.length == 6) {
+        _verifyCode();
+      }
+      return;
+    }
+
     if (value.isNotEmpty && index < 5) {
       _focusNodes[index + 1].requestFocus();
     }
@@ -421,9 +443,10 @@ class _EmailVerificationPageState extends ConsumerState<EmailVerificationPage> {
                   focusNode: _focusNodes[index],
                   keyboardType: TextInputType.number,
                   textAlign: TextAlign.center,
-                  maxLength: 1,
+                  // No maxLength — see _onPinChanged for the paste flow.
                   inputFormatters: [
                     FilteringTextInputFormatter.digitsOnly,
+                    LengthLimitingTextInputFormatter(6),
                   ],
                   style: AppTextStyles.heading3Alt(),
                   decoration: InputDecoration(

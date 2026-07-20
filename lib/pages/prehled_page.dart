@@ -5,6 +5,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 import '../core/strings/app_strings.dart';
 import '../core/theme/app_theme.dart';
 import '../core/providers/core_providers.dart';
+import '../core/providers/practice_providers.dart';
 import '../data/repositories/user_stats_repository.dart';
 import '../models/course_model.dart';
 import '../utils/achievement_stats.dart';
@@ -12,6 +13,7 @@ import '../widgets/widgets.dart';
 import 'achievements_page.dart';
 import 'course_detail_page.dart';
 import 'knihovna_page.dart';
+import 'practice_page.dart';
 import 'quiz_page.dart';
 
 // Placeholder pages
@@ -220,33 +222,41 @@ class PrehledPage extends ConsumerWidget {
                 },
               ),
             ),
-            // // Denní procvičování (commented out)
-            // Padding(
-            //   padding: const EdgeInsets.symmetric(horizontal: 16),
-            //   child: Text(
-            //     'Denní procvičování',
-            //     style: AppTextStyles.heading1(),
-            //   ),
-            // ),
-            // const SizedBox(height: 16),
-            // Padding(
-            //   padding: const EdgeInsets.symmetric(horizontal: 16),
-            //   child: InProgressCard(
-            //     icon: Icons.access_time_filled,
-            //     title: 'Zbývá 9 min',
-            //     subtitle: 'To dááááš',
-            //     currentProgress: 2,
-            //     totalProgress: 5,
-            //     badges: [
-            //       BadgeItem(emoji: '🌍', backgroundColor: AppColors.cardBlue),
-            //       BadgeItem(emoji: '🧬', backgroundColor: AppColors.surfaceLight),
-            //       BadgeItem(emoji: '✏️', backgroundColor: AppColors.successBg),
-            //     ],
-            //     onButtonTap: () {
-            //       // TODO: Continue course
-            //     },
-            //   ),
-            // ),
+            // Procvičování — shown only when the FSRS queue has due cards
+            // (advanced user with something to review).
+            ...(() {
+              final dueCount = ref.watch(dueCardsCountProvider).valueOrNull ?? 0;
+              if (dueCount <= 0) return const <Widget>[];
+              return [
+                const SizedBox(height: 24),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Text(
+                    AppStrings.practiceTitle,
+                    style: AppTextStyles.heading1(),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: InProgressCard(
+                    icon: Icons.access_time_filled,
+                    iconOnRight: true,
+                    title: AppStrings.practiceDueCount(dueCount),
+                    subtitle: AppStrings.practiceDashSubtitle,
+                    showProgressBar: false,
+                    buttonText: AppStrings.practiceStart,
+                    onButtonTap: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => const PracticePage(),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ];
+            }()),
             const SizedBox(height: 16),
             // Promo card
             Padding(
@@ -358,9 +368,18 @@ class PrehledPage extends ConsumerWidget {
                   );
                 }).toList();
 
-                // Pokračovat — only courses where at least 1 lesson is completed
+                // Pokračovat — courses with any recorded progress that aren't
+                // yet completed. Uses UserCourse.hasStarted (not just
+                // completedLessons) so block/quiz-based courses, which never
+                // increment completedLessons, still appear here instead of
+                // falling through both sections (BR-ZBW7TB).
                 final inProgressCourses = visibleCourses
-                    .where((uc) => uc.completedLessons > 0 && uc.courseData != null)
+                    .where((uc) =>
+                        uc.hasStarted &&
+                        uc.courseData != null &&
+                        // only_quiz courses live in "Rychlé kvízy"; don't
+                        // duplicate them here.
+                        uc.courseData?['only_quiz'] != true)
                     .toList();
 
                 return [

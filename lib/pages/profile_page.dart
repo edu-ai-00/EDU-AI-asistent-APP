@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import '../core/theme/app_theme.dart';
 import '../core/strings/app_strings.dart';
+import '../core/strings/locale_manager.dart';
 import '../widgets/page_header.dart';
 
 /// Profile page with user info, stats, and settings.
@@ -57,7 +58,7 @@ class ProfilePage extends StatefulWidget {
     this.streakDays = 1,
     this.achievementsCount = 0,
     this.notificationsEnabled = true,
-    this.currentLanguage = AppStrings.profileLanguageDefault,
+    this.currentLanguage = '',
     this.onBack,
     this.onAchievementsTap,
     this.onLibraryTap,
@@ -151,10 +152,11 @@ class _ProfilePageState extends State<ProfilePage> {
                   trailing: AppStrings.profileComingSoon,
                 ),
                 _buildDivider(),
-                _buildDisabledItem(
+                _buildSettingsItem(
                   icon: Icons.language,
                   label: AppStrings.profileLanguage,
-                  trailing: AppStrings.profileComingSoon,
+                  trailing: LocaleManager.current.displayName,
+                  onTap: _showLanguagePicker,
                 ),
               ]),
               const SizedBox(height: 24),
@@ -401,6 +403,44 @@ class _ProfilePageState extends State<ProfilePage> {
         ),
       ),
     );
+  }
+
+  /// Show a modal dialog with available locales. Selecting one applies it
+  /// immediately (via [LocaleManager.setLocale]) and rebuilds the UI.
+  Future<void> _showLanguagePicker() async {
+    final picked = await showDialog<AppLocale>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: Text(AppStrings.profileLanguage),
+          contentPadding: const EdgeInsets.symmetric(vertical: 8),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final locale in AppLocale.values)
+                ListTile(
+                  title: Text(locale.displayName),
+                  trailing: locale == LocaleManager.current
+                      ? Icon(Icons.check, color: AppColors.primary)
+                      : null,
+                  onTap: () => Navigator.of(ctx).pop(locale),
+                ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: Text(AppStrings.actionCancel),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (picked != null) {
+      await LocaleManager.setLocale(picked);
+      if (mounted) setState(() {});
+    }
   }
 
   Widget _buildSettingsItem({

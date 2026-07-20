@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/database/app_database.dart';
 import '../../../core/providers/core_providers.dart';
+import '../../../core/strings/app_strings.dart';
 import '../data/email_validation_repository.dart';
 import 'package:eduai/core/util/silent_log.dart';
 
@@ -105,7 +106,7 @@ class EmailVerificationNotifier extends StateNotifier<EmailVerificationState> {
   /// Send verification code to the specified email.
   Future<bool> sendCode(String email) async {
     _currentEmail = email;
-    state = const EmailVerificationLoading('Odesílám kód...');
+    state = EmailVerificationLoading(AppStrings.emailVerificationSending);
 
     final result = await _repository.sendVerificationCode(email);
 
@@ -116,7 +117,7 @@ class EmailVerificationNotifier extends StateNotifier<EmailVerificationState> {
 
     state = EmailVerificationError(
       type: EmailVerificationErrorType.networkError,
-      message: result.error ?? 'Nepodařilo se odeslat kód',
+      message: result.error ?? AppStrings.emailSendCodeError,
     );
     return false;
   }
@@ -125,14 +126,14 @@ class EmailVerificationNotifier extends StateNotifier<EmailVerificationState> {
   /// After code verification, checks if user exists and has a profile.
   Future<bool> verifyCode(String code) async {
     if (_currentEmail == null) {
-      state = const EmailVerificationError(
+      state = EmailVerificationError(
         type: EmailVerificationErrorType.unknown,
-        message: 'E-mail nebyl zadán',
+        message: AppStrings.emailMissingError,
       );
       return false;
     }
 
-    state = const EmailVerificationLoading('Ověřuji kód...');
+    state = EmailVerificationLoading(AppStrings.authVerifyingCode);
 
     final shared = _ref.read(sessionMetaProvider).pendingSharedDevice;
     final result = await _repository.verifyCode(
@@ -152,7 +153,7 @@ class EmailVerificationNotifier extends StateNotifier<EmailVerificationState> {
 
       // If verify returned a token, user already exists - fetch their profile
       if (verifyToken != null && verifyToken.isNotEmpty) {
-        state = const EmailVerificationLoading('Načítám profil...');
+        state = EmailVerificationLoading(AppStrings.emailLoadingProfile);
 
         // Save token + session metadata so the rotation interceptor and
         // inactivity watcher pick up the new session.
@@ -418,11 +419,11 @@ class EmailVerificationNotifier extends StateNotifier<EmailVerificationState> {
 
   String _getErrorMessage(EmailVerificationErrorType type) {
     return switch (type) {
-      EmailVerificationErrorType.invalidCode => 'Neplatný kód',
-      EmailVerificationErrorType.codeExpired => 'Kód vypršel',
-      EmailVerificationErrorType.rateLimited => 'Počkejte před dalším odesláním',
-      EmailVerificationErrorType.networkError => 'Chyba připojení',
-      EmailVerificationErrorType.unknown => 'Nastala neočekávaná chyba',
+      EmailVerificationErrorType.invalidCode => AppStrings.emailErrInvalidCode,
+      EmailVerificationErrorType.codeExpired => AppStrings.emailErrCodeExpired,
+      EmailVerificationErrorType.rateLimited => AppStrings.emailErrRateLimited,
+      EmailVerificationErrorType.networkError => AppStrings.emailErrNetwork,
+      EmailVerificationErrorType.unknown => AppStrings.emailErrUnknown,
     };
   }
 }

@@ -11763,6 +11763,872 @@ class StudentFsrsProfilesTableCompanion
   }
 }
 
+class $WorkHeartbeatsTableTable extends WorkHeartbeatsTable
+    with TableInfo<$WorkHeartbeatsTableTable, WorkHeartbeatsTableData> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $WorkHeartbeatsTableTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _clientUuidMeta = const VerificationMeta(
+    'clientUuid',
+  );
+  @override
+  late final GeneratedColumn<String> clientUuid = GeneratedColumn<String>(
+    'client_uuid',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _courseIdMeta = const VerificationMeta(
+    'courseId',
+  );
+  @override
+  late final GeneratedColumn<String> courseId = GeneratedColumn<String>(
+    'course_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _lessonIdMeta = const VerificationMeta(
+    'lessonId',
+  );
+  @override
+  late final GeneratedColumn<String> lessonId = GeneratedColumn<String>(
+    'lesson_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _contextMeta = const VerificationMeta(
+    'context',
+  );
+  @override
+  late final GeneratedColumn<String> context = GeneratedColumn<String>(
+    'context',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _occurredAtMeta = const VerificationMeta(
+    'occurredAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> occurredAt = GeneratedColumn<DateTime>(
+    'occurred_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _syncedMeta = const VerificationMeta('synced');
+  @override
+  late final GeneratedColumn<bool> synced = GeneratedColumn<bool>(
+    'synced',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("synced" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    clientUuid,
+    courseId,
+    lessonId,
+    context,
+    occurredAt,
+    synced,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'work_heartbeats';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<WorkHeartbeatsTableData> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('client_uuid')) {
+      context.handle(
+        _clientUuidMeta,
+        clientUuid.isAcceptableOrUnknown(data['client_uuid']!, _clientUuidMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_clientUuidMeta);
+    }
+    if (data.containsKey('course_id')) {
+      context.handle(
+        _courseIdMeta,
+        courseId.isAcceptableOrUnknown(data['course_id']!, _courseIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_courseIdMeta);
+    }
+    if (data.containsKey('lesson_id')) {
+      context.handle(
+        _lessonIdMeta,
+        lessonId.isAcceptableOrUnknown(data['lesson_id']!, _lessonIdMeta),
+      );
+    }
+    if (data.containsKey('context')) {
+      context.handle(
+        _contextMeta,
+        this.context.isAcceptableOrUnknown(data['context']!, _contextMeta),
+      );
+    }
+    if (data.containsKey('occurred_at')) {
+      context.handle(
+        _occurredAtMeta,
+        occurredAt.isAcceptableOrUnknown(data['occurred_at']!, _occurredAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_occurredAtMeta);
+    }
+    if (data.containsKey('synced')) {
+      context.handle(
+        _syncedMeta,
+        synced.isAcceptableOrUnknown(data['synced']!, _syncedMeta),
+      );
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {clientUuid};
+  @override
+  WorkHeartbeatsTableData map(
+    Map<String, dynamic> data, {
+    String? tablePrefix,
+  }) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return WorkHeartbeatsTableData(
+      clientUuid: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}client_uuid'],
+      )!,
+      courseId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}course_id'],
+      )!,
+      lessonId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}lesson_id'],
+      ),
+      context: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}context'],
+      ),
+      occurredAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}occurred_at'],
+      )!,
+      synced: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}synced'],
+      )!,
+    );
+  }
+
+  @override
+  $WorkHeartbeatsTableTable createAlias(String alias) {
+    return $WorkHeartbeatsTableTable(attachedDatabase, alias);
+  }
+}
+
+class WorkHeartbeatsTableData extends DataClass
+    implements Insertable<WorkHeartbeatsTableData> {
+  /// Local + server idempotency key (UUID v4).
+  final String clientUuid;
+
+  /// Course the user was working in.
+  final String courseId;
+
+  /// Lesson within the course, if known.
+  final String? lessonId;
+
+  /// Where the user was (e.g. 'lesson', 'quiz', 'chat', 'video').
+  final String? context;
+
+  /// When the heartbeat fired (device clock, UTC).
+  final DateTime occurredAt;
+
+  /// False until the API has accepted this row.
+  final bool synced;
+  const WorkHeartbeatsTableData({
+    required this.clientUuid,
+    required this.courseId,
+    this.lessonId,
+    this.context,
+    required this.occurredAt,
+    required this.synced,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['client_uuid'] = Variable<String>(clientUuid);
+    map['course_id'] = Variable<String>(courseId);
+    if (!nullToAbsent || lessonId != null) {
+      map['lesson_id'] = Variable<String>(lessonId);
+    }
+    if (!nullToAbsent || context != null) {
+      map['context'] = Variable<String>(context);
+    }
+    map['occurred_at'] = Variable<DateTime>(occurredAt);
+    map['synced'] = Variable<bool>(synced);
+    return map;
+  }
+
+  WorkHeartbeatsTableCompanion toCompanion(bool nullToAbsent) {
+    return WorkHeartbeatsTableCompanion(
+      clientUuid: Value(clientUuid),
+      courseId: Value(courseId),
+      lessonId: lessonId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(lessonId),
+      context: context == null && nullToAbsent
+          ? const Value.absent()
+          : Value(context),
+      occurredAt: Value(occurredAt),
+      synced: Value(synced),
+    );
+  }
+
+  factory WorkHeartbeatsTableData.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return WorkHeartbeatsTableData(
+      clientUuid: serializer.fromJson<String>(json['clientUuid']),
+      courseId: serializer.fromJson<String>(json['courseId']),
+      lessonId: serializer.fromJson<String?>(json['lessonId']),
+      context: serializer.fromJson<String?>(json['context']),
+      occurredAt: serializer.fromJson<DateTime>(json['occurredAt']),
+      synced: serializer.fromJson<bool>(json['synced']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'clientUuid': serializer.toJson<String>(clientUuid),
+      'courseId': serializer.toJson<String>(courseId),
+      'lessonId': serializer.toJson<String?>(lessonId),
+      'context': serializer.toJson<String?>(context),
+      'occurredAt': serializer.toJson<DateTime>(occurredAt),
+      'synced': serializer.toJson<bool>(synced),
+    };
+  }
+
+  WorkHeartbeatsTableData copyWith({
+    String? clientUuid,
+    String? courseId,
+    Value<String?> lessonId = const Value.absent(),
+    Value<String?> context = const Value.absent(),
+    DateTime? occurredAt,
+    bool? synced,
+  }) => WorkHeartbeatsTableData(
+    clientUuid: clientUuid ?? this.clientUuid,
+    courseId: courseId ?? this.courseId,
+    lessonId: lessonId.present ? lessonId.value : this.lessonId,
+    context: context.present ? context.value : this.context,
+    occurredAt: occurredAt ?? this.occurredAt,
+    synced: synced ?? this.synced,
+  );
+  WorkHeartbeatsTableData copyWithCompanion(WorkHeartbeatsTableCompanion data) {
+    return WorkHeartbeatsTableData(
+      clientUuid: data.clientUuid.present
+          ? data.clientUuid.value
+          : this.clientUuid,
+      courseId: data.courseId.present ? data.courseId.value : this.courseId,
+      lessonId: data.lessonId.present ? data.lessonId.value : this.lessonId,
+      context: data.context.present ? data.context.value : this.context,
+      occurredAt: data.occurredAt.present
+          ? data.occurredAt.value
+          : this.occurredAt,
+      synced: data.synced.present ? data.synced.value : this.synced,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('WorkHeartbeatsTableData(')
+          ..write('clientUuid: $clientUuid, ')
+          ..write('courseId: $courseId, ')
+          ..write('lessonId: $lessonId, ')
+          ..write('context: $context, ')
+          ..write('occurredAt: $occurredAt, ')
+          ..write('synced: $synced')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode =>
+      Object.hash(clientUuid, courseId, lessonId, context, occurredAt, synced);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is WorkHeartbeatsTableData &&
+          other.clientUuid == this.clientUuid &&
+          other.courseId == this.courseId &&
+          other.lessonId == this.lessonId &&
+          other.context == this.context &&
+          other.occurredAt == this.occurredAt &&
+          other.synced == this.synced);
+}
+
+class WorkHeartbeatsTableCompanion
+    extends UpdateCompanion<WorkHeartbeatsTableData> {
+  final Value<String> clientUuid;
+  final Value<String> courseId;
+  final Value<String?> lessonId;
+  final Value<String?> context;
+  final Value<DateTime> occurredAt;
+  final Value<bool> synced;
+  final Value<int> rowid;
+  const WorkHeartbeatsTableCompanion({
+    this.clientUuid = const Value.absent(),
+    this.courseId = const Value.absent(),
+    this.lessonId = const Value.absent(),
+    this.context = const Value.absent(),
+    this.occurredAt = const Value.absent(),
+    this.synced = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  WorkHeartbeatsTableCompanion.insert({
+    required String clientUuid,
+    required String courseId,
+    this.lessonId = const Value.absent(),
+    this.context = const Value.absent(),
+    required DateTime occurredAt,
+    this.synced = const Value.absent(),
+    this.rowid = const Value.absent(),
+  }) : clientUuid = Value(clientUuid),
+       courseId = Value(courseId),
+       occurredAt = Value(occurredAt);
+  static Insertable<WorkHeartbeatsTableData> custom({
+    Expression<String>? clientUuid,
+    Expression<String>? courseId,
+    Expression<String>? lessonId,
+    Expression<String>? context,
+    Expression<DateTime>? occurredAt,
+    Expression<bool>? synced,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (clientUuid != null) 'client_uuid': clientUuid,
+      if (courseId != null) 'course_id': courseId,
+      if (lessonId != null) 'lesson_id': lessonId,
+      if (context != null) 'context': context,
+      if (occurredAt != null) 'occurred_at': occurredAt,
+      if (synced != null) 'synced': synced,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  WorkHeartbeatsTableCompanion copyWith({
+    Value<String>? clientUuid,
+    Value<String>? courseId,
+    Value<String?>? lessonId,
+    Value<String?>? context,
+    Value<DateTime>? occurredAt,
+    Value<bool>? synced,
+    Value<int>? rowid,
+  }) {
+    return WorkHeartbeatsTableCompanion(
+      clientUuid: clientUuid ?? this.clientUuid,
+      courseId: courseId ?? this.courseId,
+      lessonId: lessonId ?? this.lessonId,
+      context: context ?? this.context,
+      occurredAt: occurredAt ?? this.occurredAt,
+      synced: synced ?? this.synced,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (clientUuid.present) {
+      map['client_uuid'] = Variable<String>(clientUuid.value);
+    }
+    if (courseId.present) {
+      map['course_id'] = Variable<String>(courseId.value);
+    }
+    if (lessonId.present) {
+      map['lesson_id'] = Variable<String>(lessonId.value);
+    }
+    if (context.present) {
+      map['context'] = Variable<String>(context.value);
+    }
+    if (occurredAt.present) {
+      map['occurred_at'] = Variable<DateTime>(occurredAt.value);
+    }
+    if (synced.present) {
+      map['synced'] = Variable<bool>(synced.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('WorkHeartbeatsTableCompanion(')
+          ..write('clientUuid: $clientUuid, ')
+          ..write('courseId: $courseId, ')
+          ..write('lessonId: $lessonId, ')
+          ..write('context: $context, ')
+          ..write('occurredAt: $occurredAt, ')
+          ..write('synced: $synced, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $GpfDimensionsTableTable extends GpfDimensionsTable
+    with TableInfo<$GpfDimensionsTableTable, GpfDimensionsTableData> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $GpfDimensionsTableTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _dimensionIndexMeta = const VerificationMeta(
+    'dimensionIndex',
+  );
+  @override
+  late final GeneratedColumn<int> dimensionIndex = GeneratedColumn<int>(
+    'dimension_index',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _codeMeta = const VerificationMeta('code');
+  @override
+  late final GeneratedColumn<String> code = GeneratedColumn<String>(
+    'code',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _domainCodeMeta = const VerificationMeta(
+    'domainCode',
+  );
+  @override
+  late final GeneratedColumn<String> domainCode = GeneratedColumn<String>(
+    'domain_code',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _domainNameMeta = const VerificationMeta(
+    'domainName',
+  );
+  @override
+  late final GeneratedColumn<String> domainName = GeneratedColumn<String>(
+    'domain_name',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _constructNameMeta = const VerificationMeta(
+    'constructName',
+  );
+  @override
+  late final GeneratedColumn<String> constructName = GeneratedColumn<String>(
+    'construct_name',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _nameMeta = const VerificationMeta('name');
+  @override
+  late final GeneratedColumn<String> name = GeneratedColumn<String>(
+    'name',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    dimensionIndex,
+    code,
+    domainCode,
+    domainName,
+    constructName,
+    name,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'gpf_dimensions';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<GpfDimensionsTableData> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('dimension_index')) {
+      context.handle(
+        _dimensionIndexMeta,
+        dimensionIndex.isAcceptableOrUnknown(
+          data['dimension_index']!,
+          _dimensionIndexMeta,
+        ),
+      );
+    }
+    if (data.containsKey('code')) {
+      context.handle(
+        _codeMeta,
+        code.isAcceptableOrUnknown(data['code']!, _codeMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_codeMeta);
+    }
+    if (data.containsKey('domain_code')) {
+      context.handle(
+        _domainCodeMeta,
+        domainCode.isAcceptableOrUnknown(data['domain_code']!, _domainCodeMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_domainCodeMeta);
+    }
+    if (data.containsKey('domain_name')) {
+      context.handle(
+        _domainNameMeta,
+        domainName.isAcceptableOrUnknown(data['domain_name']!, _domainNameMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_domainNameMeta);
+    }
+    if (data.containsKey('construct_name')) {
+      context.handle(
+        _constructNameMeta,
+        constructName.isAcceptableOrUnknown(
+          data['construct_name']!,
+          _constructNameMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_constructNameMeta);
+    }
+    if (data.containsKey('name')) {
+      context.handle(
+        _nameMeta,
+        name.isAcceptableOrUnknown(data['name']!, _nameMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_nameMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {dimensionIndex};
+  @override
+  GpfDimensionsTableData map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return GpfDimensionsTableData(
+      dimensionIndex: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}dimension_index'],
+      )!,
+      code: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}code'],
+      )!,
+      domainCode: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}domain_code'],
+      )!,
+      domainName: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}domain_name'],
+      )!,
+      constructName: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}construct_name'],
+      )!,
+      name: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}name'],
+      )!,
+    );
+  }
+
+  @override
+  $GpfDimensionsTableTable createAlias(String alias) {
+    return $GpfDimensionsTableTable(attachedDatabase, alias);
+  }
+}
+
+class GpfDimensionsTableData extends DataClass
+    implements Insertable<GpfDimensionsTableData> {
+  /// Zero-based index in the 35-element vector (0–34). Primary key.
+  final int dimensionIndex;
+
+  /// Hierarchical code, e.g. "N1.1".
+  final String code;
+
+  /// Parent domain code, e.g. "N".
+  final String domainCode;
+
+  /// Czech domain name, e.g. "Číslo a operace".
+  final String domainName;
+
+  /// Czech construct name, e.g. "Přirozená čísla".
+  final String constructName;
+
+  /// Czech subconstruct name.
+  final String name;
+  const GpfDimensionsTableData({
+    required this.dimensionIndex,
+    required this.code,
+    required this.domainCode,
+    required this.domainName,
+    required this.constructName,
+    required this.name,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['dimension_index'] = Variable<int>(dimensionIndex);
+    map['code'] = Variable<String>(code);
+    map['domain_code'] = Variable<String>(domainCode);
+    map['domain_name'] = Variable<String>(domainName);
+    map['construct_name'] = Variable<String>(constructName);
+    map['name'] = Variable<String>(name);
+    return map;
+  }
+
+  GpfDimensionsTableCompanion toCompanion(bool nullToAbsent) {
+    return GpfDimensionsTableCompanion(
+      dimensionIndex: Value(dimensionIndex),
+      code: Value(code),
+      domainCode: Value(domainCode),
+      domainName: Value(domainName),
+      constructName: Value(constructName),
+      name: Value(name),
+    );
+  }
+
+  factory GpfDimensionsTableData.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return GpfDimensionsTableData(
+      dimensionIndex: serializer.fromJson<int>(json['dimensionIndex']),
+      code: serializer.fromJson<String>(json['code']),
+      domainCode: serializer.fromJson<String>(json['domainCode']),
+      domainName: serializer.fromJson<String>(json['domainName']),
+      constructName: serializer.fromJson<String>(json['constructName']),
+      name: serializer.fromJson<String>(json['name']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'dimensionIndex': serializer.toJson<int>(dimensionIndex),
+      'code': serializer.toJson<String>(code),
+      'domainCode': serializer.toJson<String>(domainCode),
+      'domainName': serializer.toJson<String>(domainName),
+      'constructName': serializer.toJson<String>(constructName),
+      'name': serializer.toJson<String>(name),
+    };
+  }
+
+  GpfDimensionsTableData copyWith({
+    int? dimensionIndex,
+    String? code,
+    String? domainCode,
+    String? domainName,
+    String? constructName,
+    String? name,
+  }) => GpfDimensionsTableData(
+    dimensionIndex: dimensionIndex ?? this.dimensionIndex,
+    code: code ?? this.code,
+    domainCode: domainCode ?? this.domainCode,
+    domainName: domainName ?? this.domainName,
+    constructName: constructName ?? this.constructName,
+    name: name ?? this.name,
+  );
+  GpfDimensionsTableData copyWithCompanion(GpfDimensionsTableCompanion data) {
+    return GpfDimensionsTableData(
+      dimensionIndex: data.dimensionIndex.present
+          ? data.dimensionIndex.value
+          : this.dimensionIndex,
+      code: data.code.present ? data.code.value : this.code,
+      domainCode: data.domainCode.present
+          ? data.domainCode.value
+          : this.domainCode,
+      domainName: data.domainName.present
+          ? data.domainName.value
+          : this.domainName,
+      constructName: data.constructName.present
+          ? data.constructName.value
+          : this.constructName,
+      name: data.name.present ? data.name.value : this.name,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('GpfDimensionsTableData(')
+          ..write('dimensionIndex: $dimensionIndex, ')
+          ..write('code: $code, ')
+          ..write('domainCode: $domainCode, ')
+          ..write('domainName: $domainName, ')
+          ..write('constructName: $constructName, ')
+          ..write('name: $name')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    dimensionIndex,
+    code,
+    domainCode,
+    domainName,
+    constructName,
+    name,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is GpfDimensionsTableData &&
+          other.dimensionIndex == this.dimensionIndex &&
+          other.code == this.code &&
+          other.domainCode == this.domainCode &&
+          other.domainName == this.domainName &&
+          other.constructName == this.constructName &&
+          other.name == this.name);
+}
+
+class GpfDimensionsTableCompanion
+    extends UpdateCompanion<GpfDimensionsTableData> {
+  final Value<int> dimensionIndex;
+  final Value<String> code;
+  final Value<String> domainCode;
+  final Value<String> domainName;
+  final Value<String> constructName;
+  final Value<String> name;
+  const GpfDimensionsTableCompanion({
+    this.dimensionIndex = const Value.absent(),
+    this.code = const Value.absent(),
+    this.domainCode = const Value.absent(),
+    this.domainName = const Value.absent(),
+    this.constructName = const Value.absent(),
+    this.name = const Value.absent(),
+  });
+  GpfDimensionsTableCompanion.insert({
+    this.dimensionIndex = const Value.absent(),
+    required String code,
+    required String domainCode,
+    required String domainName,
+    required String constructName,
+    required String name,
+  }) : code = Value(code),
+       domainCode = Value(domainCode),
+       domainName = Value(domainName),
+       constructName = Value(constructName),
+       name = Value(name);
+  static Insertable<GpfDimensionsTableData> custom({
+    Expression<int>? dimensionIndex,
+    Expression<String>? code,
+    Expression<String>? domainCode,
+    Expression<String>? domainName,
+    Expression<String>? constructName,
+    Expression<String>? name,
+  }) {
+    return RawValuesInsertable({
+      if (dimensionIndex != null) 'dimension_index': dimensionIndex,
+      if (code != null) 'code': code,
+      if (domainCode != null) 'domain_code': domainCode,
+      if (domainName != null) 'domain_name': domainName,
+      if (constructName != null) 'construct_name': constructName,
+      if (name != null) 'name': name,
+    });
+  }
+
+  GpfDimensionsTableCompanion copyWith({
+    Value<int>? dimensionIndex,
+    Value<String>? code,
+    Value<String>? domainCode,
+    Value<String>? domainName,
+    Value<String>? constructName,
+    Value<String>? name,
+  }) {
+    return GpfDimensionsTableCompanion(
+      dimensionIndex: dimensionIndex ?? this.dimensionIndex,
+      code: code ?? this.code,
+      domainCode: domainCode ?? this.domainCode,
+      domainName: domainName ?? this.domainName,
+      constructName: constructName ?? this.constructName,
+      name: name ?? this.name,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (dimensionIndex.present) {
+      map['dimension_index'] = Variable<int>(dimensionIndex.value);
+    }
+    if (code.present) {
+      map['code'] = Variable<String>(code.value);
+    }
+    if (domainCode.present) {
+      map['domain_code'] = Variable<String>(domainCode.value);
+    }
+    if (domainName.present) {
+      map['domain_name'] = Variable<String>(domainName.value);
+    }
+    if (constructName.present) {
+      map['construct_name'] = Variable<String>(constructName.value);
+    }
+    if (name.present) {
+      map['name'] = Variable<String>(name.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('GpfDimensionsTableCompanion(')
+          ..write('dimensionIndex: $dimensionIndex, ')
+          ..write('code: $code, ')
+          ..write('domainCode: $domainCode, ')
+          ..write('domainName: $domainName, ')
+          ..write('constructName: $constructName, ')
+          ..write('name: $name')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$AppDatabase extends GeneratedDatabase {
   _$AppDatabase(QueryExecutor e) : super(e);
   $AppDatabaseManager get managers => $AppDatabaseManager(this);
@@ -11797,6 +12663,10 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   );
   late final $StudentFsrsProfilesTableTable studentFsrsProfilesTable =
       $StudentFsrsProfilesTableTable(this);
+  late final $WorkHeartbeatsTableTable workHeartbeatsTable =
+      $WorkHeartbeatsTableTable(this);
+  late final $GpfDimensionsTableTable gpfDimensionsTable =
+      $GpfDimensionsTableTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -11819,6 +12689,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     practiceCardsTable,
     reviewLogsTable,
     studentFsrsProfilesTable,
+    workHeartbeatsTable,
+    gpfDimensionsTable,
   ];
 }
 
@@ -17580,6 +18452,479 @@ typedef $$StudentFsrsProfilesTableTableProcessedTableManager =
       StudentFsrsProfilesTableData,
       PrefetchHooks Function()
     >;
+typedef $$WorkHeartbeatsTableTableCreateCompanionBuilder =
+    WorkHeartbeatsTableCompanion Function({
+      required String clientUuid,
+      required String courseId,
+      Value<String?> lessonId,
+      Value<String?> context,
+      required DateTime occurredAt,
+      Value<bool> synced,
+      Value<int> rowid,
+    });
+typedef $$WorkHeartbeatsTableTableUpdateCompanionBuilder =
+    WorkHeartbeatsTableCompanion Function({
+      Value<String> clientUuid,
+      Value<String> courseId,
+      Value<String?> lessonId,
+      Value<String?> context,
+      Value<DateTime> occurredAt,
+      Value<bool> synced,
+      Value<int> rowid,
+    });
+
+class $$WorkHeartbeatsTableTableFilterComposer
+    extends Composer<_$AppDatabase, $WorkHeartbeatsTableTable> {
+  $$WorkHeartbeatsTableTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get clientUuid => $composableBuilder(
+    column: $table.clientUuid,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get courseId => $composableBuilder(
+    column: $table.courseId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get lessonId => $composableBuilder(
+    column: $table.lessonId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get context => $composableBuilder(
+    column: $table.context,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get occurredAt => $composableBuilder(
+    column: $table.occurredAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get synced => $composableBuilder(
+    column: $table.synced,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$WorkHeartbeatsTableTableOrderingComposer
+    extends Composer<_$AppDatabase, $WorkHeartbeatsTableTable> {
+  $$WorkHeartbeatsTableTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get clientUuid => $composableBuilder(
+    column: $table.clientUuid,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get courseId => $composableBuilder(
+    column: $table.courseId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get lessonId => $composableBuilder(
+    column: $table.lessonId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get context => $composableBuilder(
+    column: $table.context,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get occurredAt => $composableBuilder(
+    column: $table.occurredAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get synced => $composableBuilder(
+    column: $table.synced,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$WorkHeartbeatsTableTableAnnotationComposer
+    extends Composer<_$AppDatabase, $WorkHeartbeatsTableTable> {
+  $$WorkHeartbeatsTableTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get clientUuid => $composableBuilder(
+    column: $table.clientUuid,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get courseId =>
+      $composableBuilder(column: $table.courseId, builder: (column) => column);
+
+  GeneratedColumn<String> get lessonId =>
+      $composableBuilder(column: $table.lessonId, builder: (column) => column);
+
+  GeneratedColumn<String> get context =>
+      $composableBuilder(column: $table.context, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get occurredAt => $composableBuilder(
+    column: $table.occurredAt,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<bool> get synced =>
+      $composableBuilder(column: $table.synced, builder: (column) => column);
+}
+
+class $$WorkHeartbeatsTableTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $WorkHeartbeatsTableTable,
+          WorkHeartbeatsTableData,
+          $$WorkHeartbeatsTableTableFilterComposer,
+          $$WorkHeartbeatsTableTableOrderingComposer,
+          $$WorkHeartbeatsTableTableAnnotationComposer,
+          $$WorkHeartbeatsTableTableCreateCompanionBuilder,
+          $$WorkHeartbeatsTableTableUpdateCompanionBuilder,
+          (
+            WorkHeartbeatsTableData,
+            BaseReferences<
+              _$AppDatabase,
+              $WorkHeartbeatsTableTable,
+              WorkHeartbeatsTableData
+            >,
+          ),
+          WorkHeartbeatsTableData,
+          PrefetchHooks Function()
+        > {
+  $$WorkHeartbeatsTableTableTableManager(
+    _$AppDatabase db,
+    $WorkHeartbeatsTableTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$WorkHeartbeatsTableTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$WorkHeartbeatsTableTableOrderingComposer(
+                $db: db,
+                $table: table,
+              ),
+          createComputedFieldComposer: () =>
+              $$WorkHeartbeatsTableTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<String> clientUuid = const Value.absent(),
+                Value<String> courseId = const Value.absent(),
+                Value<String?> lessonId = const Value.absent(),
+                Value<String?> context = const Value.absent(),
+                Value<DateTime> occurredAt = const Value.absent(),
+                Value<bool> synced = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => WorkHeartbeatsTableCompanion(
+                clientUuid: clientUuid,
+                courseId: courseId,
+                lessonId: lessonId,
+                context: context,
+                occurredAt: occurredAt,
+                synced: synced,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String clientUuid,
+                required String courseId,
+                Value<String?> lessonId = const Value.absent(),
+                Value<String?> context = const Value.absent(),
+                required DateTime occurredAt,
+                Value<bool> synced = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => WorkHeartbeatsTableCompanion.insert(
+                clientUuid: clientUuid,
+                courseId: courseId,
+                lessonId: lessonId,
+                context: context,
+                occurredAt: occurredAt,
+                synced: synced,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$WorkHeartbeatsTableTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $WorkHeartbeatsTableTable,
+      WorkHeartbeatsTableData,
+      $$WorkHeartbeatsTableTableFilterComposer,
+      $$WorkHeartbeatsTableTableOrderingComposer,
+      $$WorkHeartbeatsTableTableAnnotationComposer,
+      $$WorkHeartbeatsTableTableCreateCompanionBuilder,
+      $$WorkHeartbeatsTableTableUpdateCompanionBuilder,
+      (
+        WorkHeartbeatsTableData,
+        BaseReferences<
+          _$AppDatabase,
+          $WorkHeartbeatsTableTable,
+          WorkHeartbeatsTableData
+        >,
+      ),
+      WorkHeartbeatsTableData,
+      PrefetchHooks Function()
+    >;
+typedef $$GpfDimensionsTableTableCreateCompanionBuilder =
+    GpfDimensionsTableCompanion Function({
+      Value<int> dimensionIndex,
+      required String code,
+      required String domainCode,
+      required String domainName,
+      required String constructName,
+      required String name,
+    });
+typedef $$GpfDimensionsTableTableUpdateCompanionBuilder =
+    GpfDimensionsTableCompanion Function({
+      Value<int> dimensionIndex,
+      Value<String> code,
+      Value<String> domainCode,
+      Value<String> domainName,
+      Value<String> constructName,
+      Value<String> name,
+    });
+
+class $$GpfDimensionsTableTableFilterComposer
+    extends Composer<_$AppDatabase, $GpfDimensionsTableTable> {
+  $$GpfDimensionsTableTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get dimensionIndex => $composableBuilder(
+    column: $table.dimensionIndex,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get code => $composableBuilder(
+    column: $table.code,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get domainCode => $composableBuilder(
+    column: $table.domainCode,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get domainName => $composableBuilder(
+    column: $table.domainName,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get constructName => $composableBuilder(
+    column: $table.constructName,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get name => $composableBuilder(
+    column: $table.name,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$GpfDimensionsTableTableOrderingComposer
+    extends Composer<_$AppDatabase, $GpfDimensionsTableTable> {
+  $$GpfDimensionsTableTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get dimensionIndex => $composableBuilder(
+    column: $table.dimensionIndex,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get code => $composableBuilder(
+    column: $table.code,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get domainCode => $composableBuilder(
+    column: $table.domainCode,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get domainName => $composableBuilder(
+    column: $table.domainName,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get constructName => $composableBuilder(
+    column: $table.constructName,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get name => $composableBuilder(
+    column: $table.name,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$GpfDimensionsTableTableAnnotationComposer
+    extends Composer<_$AppDatabase, $GpfDimensionsTableTable> {
+  $$GpfDimensionsTableTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get dimensionIndex => $composableBuilder(
+    column: $table.dimensionIndex,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get code =>
+      $composableBuilder(column: $table.code, builder: (column) => column);
+
+  GeneratedColumn<String> get domainCode => $composableBuilder(
+    column: $table.domainCode,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get domainName => $composableBuilder(
+    column: $table.domainName,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get constructName => $composableBuilder(
+    column: $table.constructName,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get name =>
+      $composableBuilder(column: $table.name, builder: (column) => column);
+}
+
+class $$GpfDimensionsTableTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $GpfDimensionsTableTable,
+          GpfDimensionsTableData,
+          $$GpfDimensionsTableTableFilterComposer,
+          $$GpfDimensionsTableTableOrderingComposer,
+          $$GpfDimensionsTableTableAnnotationComposer,
+          $$GpfDimensionsTableTableCreateCompanionBuilder,
+          $$GpfDimensionsTableTableUpdateCompanionBuilder,
+          (
+            GpfDimensionsTableData,
+            BaseReferences<
+              _$AppDatabase,
+              $GpfDimensionsTableTable,
+              GpfDimensionsTableData
+            >,
+          ),
+          GpfDimensionsTableData,
+          PrefetchHooks Function()
+        > {
+  $$GpfDimensionsTableTableTableManager(
+    _$AppDatabase db,
+    $GpfDimensionsTableTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$GpfDimensionsTableTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$GpfDimensionsTableTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$GpfDimensionsTableTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<int> dimensionIndex = const Value.absent(),
+                Value<String> code = const Value.absent(),
+                Value<String> domainCode = const Value.absent(),
+                Value<String> domainName = const Value.absent(),
+                Value<String> constructName = const Value.absent(),
+                Value<String> name = const Value.absent(),
+              }) => GpfDimensionsTableCompanion(
+                dimensionIndex: dimensionIndex,
+                code: code,
+                domainCode: domainCode,
+                domainName: domainName,
+                constructName: constructName,
+                name: name,
+              ),
+          createCompanionCallback:
+              ({
+                Value<int> dimensionIndex = const Value.absent(),
+                required String code,
+                required String domainCode,
+                required String domainName,
+                required String constructName,
+                required String name,
+              }) => GpfDimensionsTableCompanion.insert(
+                dimensionIndex: dimensionIndex,
+                code: code,
+                domainCode: domainCode,
+                domainName: domainName,
+                constructName: constructName,
+                name: name,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$GpfDimensionsTableTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $GpfDimensionsTableTable,
+      GpfDimensionsTableData,
+      $$GpfDimensionsTableTableFilterComposer,
+      $$GpfDimensionsTableTableOrderingComposer,
+      $$GpfDimensionsTableTableAnnotationComposer,
+      $$GpfDimensionsTableTableCreateCompanionBuilder,
+      $$GpfDimensionsTableTableUpdateCompanionBuilder,
+      (
+        GpfDimensionsTableData,
+        BaseReferences<
+          _$AppDatabase,
+          $GpfDimensionsTableTable,
+          GpfDimensionsTableData
+        >,
+      ),
+      GpfDimensionsTableData,
+      PrefetchHooks Function()
+    >;
 
 class $AppDatabaseManager {
   final _$AppDatabase _db;
@@ -17624,4 +18969,8 @@ class $AppDatabaseManager {
         _db,
         _db.studentFsrsProfilesTable,
       );
+  $$WorkHeartbeatsTableTableTableManager get workHeartbeatsTable =>
+      $$WorkHeartbeatsTableTableTableManager(_db, _db.workHeartbeatsTable);
+  $$GpfDimensionsTableTableTableManager get gpfDimensionsTable =>
+      $$GpfDimensionsTableTableTableManager(_db, _db.gpfDimensionsTable);
 }

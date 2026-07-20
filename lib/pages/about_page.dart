@@ -681,6 +681,33 @@ class _AboutPageState extends ConsumerState<AboutPage> {
       }
     } catch (e, st) { silentLog('about_page', e, st); }
 
+    // Practice / FSRS cards — surfaces whether cards were ever seeded so a
+    // "bookmarks but no Procvičování" report can be diagnosed without guessing.
+    Map<String, dynamic>? practiceInfo;
+    try {
+      final user = await db.getActiveUser();
+      if (user != null) {
+        final activeCards = await db.getActivePracticeCards(user.id);
+        final dueCount = await db.countDuePracticeCards(user.id);
+        final bookmarks = await db.getAllBookmarks(user.id);
+        practiceInfo = {
+          'active_cards': activeCards.length,
+          'due_cards': dueCount,
+          'bookmarks': bookmarks.length,
+          'cards': activeCards
+              .map((c) => {
+                    'block_id': c.blockId,
+                    'course_id': c.courseId,
+                    'source_type': c.sourceType,
+                    'state': c.state,
+                    'due_date': c.dueDate.toIso8601String(),
+                    'is_active': c.isActive,
+                  })
+              .toList(),
+        };
+      }
+    } catch (e, st) { silentLog('about_page', e, st); }
+
     return {
       'app_version': appVersion.isNotEmpty ? '$appVersion+$buildNumber' : 'unknown',
       'platform': platform,
@@ -703,6 +730,7 @@ class _AboutPageState extends ConsumerState<AboutPage> {
         'database': databaseInfo,
         'sync': syncInfo,
         'elo': eloInfo,
+        'practice': practiceInfo,
       },
     };
   }

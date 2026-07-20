@@ -1,11 +1,16 @@
+import 'dart:convert';
+
+import 'package:drift/drift.dart' show Value;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:uuid/uuid.dart';
 import '../core/database/app_database.dart';
 import '../core/network/api_client.dart';
-import '../core/network/api_endpoints.dart';
+import '../core/oauth/oauth_clients.dart';
 import '../core/providers/core_providers.dart';
 import '../core/theme/app_theme.dart';
 import '../core/widgets/inactivity_watcher.dart';
+import '../data/repositories/oauth_repository.dart';
 import '../pages/auth_page.dart';
 import '../pages/email_verification_page.dart';
 import '../pages/main_screen.dart';
@@ -101,7 +106,7 @@ class _AuthWrapperState extends ConsumerState<AuthWrapper> {
               }
             } else if (response.statusCode == 401 || response.statusCode == 403) {
               // Token is definitely invalid — log out
-              await db.logoutUser();
+              await ref.read(logoutCoordinatorProvider).teardown();
               setState(() {
                 _appState = AppState.auth;
               });
@@ -113,7 +118,7 @@ class _AuthWrapperState extends ConsumerState<AuthWrapper> {
             // API call failed - check if it's 401 unauthorized
             if (apiError.toString().contains('401')) {
               // Token is invalid - log out
-              await db.logoutUser();
+              await ref.read(logoutCoordinatorProvider).teardown();
               setState(() {
                 _appState = AppState.auth;
               });
@@ -122,8 +127,19 @@ class _AuthWrapperState extends ConsumerState<AuthWrapper> {
               _proceedWithLocalUser(activeUser);
             }
           }
+        } else if (isOnline) {
+          // Online but no token: the session lapsed while the app was closed
+          // (expired/revoked). We can't use authenticated features, so route to
+          // login rather than stranding the user on cached screens where
+          // online-only features (news) would 401.
+          await db.logoutUser();
+          if (mounted) {
+            setState(() {
+              _appState = AppState.auth;
+            });
+          }
         } else {
-          // Offline or no token - use local data
+          // Offline - use local data so the app still works without network.
           _proceedWithLocalUser(activeUser);
         }
       } else {
@@ -159,6 +175,101 @@ class _AuthWrapperState extends ConsumerState<AuthWrapper> {
       _isGuestUpgrade = false;
       _appState = AppState.emailVerification;
     });
+  }
+
+  Future<void> _handleOAuthSuccess(OAuthExchangeResult exchange) async {
+    try {
+      final apiClient = ref.read(apiClientProvider);
+      await apiClient.setAuthToken(exchange.token);
+      ref.invalidate(isAuthenticatedProvider);
+
+      // Persist session metadata so inactivity/expiry logic works correctly.
+      await ref.read(sessionMetaProvider).applyFromAuthResponse({
+        'token': exchange.token,
+        'shared_device': exchange.sharedDevice,
+        'expires_at': exchange.expiresAt,
+        'session_started_at': exchange.sessionStartedAt,
+      });
+
+      // Write the authenticated user into the local DB so the app shows their
+      // real profile (not the guest "Uživatel") and progress binds to their
+      // account. The magic-link flow does the same after /api/user; the OAuth
+      // exchange already returns the full user, so no extra request is needed.
+      await _persistOAuthUser(exchange.user);
+
+      if (mounted) {
+        setState(() {
+          _userEmail = exchange.user['email'] as String? ?? '';
+          _appState = exchange.profileSetupRequired
+              ? AppState.profileSetup
+              : AppState.main;
+        });
+      }
+
+      // Pull server data immediately after OAuth login.
+      try {
+        ref.read(syncServiceProvider).forceSync();
+      } catch (e, st) { silentLog('root_navigator', e, st); }
+    } catch (e, st) {
+      silentLog('root_navigator', e, st);
+    }
+  }
+
+  /// Mirror the OAuth-verified user into the local Drift DB.
+  ///
+  /// [activeUserStreamProvider] (the source for the displayed name/email and
+  /// for progress binding) reads the local users table, not the auth response.
+  /// A guest with an empty email is upgraded in place (preserving their local
+  /// data); a different account creates a fresh active row and migrates any
+  /// prior local data onto it.
+  Future<void> _persistOAuthUser(Map<String, dynamic> u) async {
+    final db = ref.read(appDatabaseProvider);
+
+    final email = (u['email'] as String?) ?? '';
+    if (email.isEmpty) return; // backend guarantees a verified email; guard anyway
+    final name = (u['name'] as String?) ?? '';
+    final avatarIndex = (u['avatar_index'] as int?) ?? 0;
+    final rawSubjects = u['selected_subjects'];
+    final subjects = rawSubjects is List
+        ? jsonEncode(rawSubjects.map((e) => e.toString()).toList())
+        : null;
+
+    final activeUser = await db.getActiveUser();
+    final isGuestUpgrade = activeUser != null && activeUser.email.isEmpty;
+
+    if (isGuestUpgrade) {
+      await db.updateUserEmail(activeUser.id, email);
+      await db.markEmailValidated(activeUser.id);
+      if (name.isNotEmpty) {
+        await db.updateUserProfile(
+          userId: activeUser.id,
+          name: name,
+          avatarIndex: avatarIndex,
+          selectedSubjects: subjects,
+        );
+      }
+    } else if (activeUser == null || activeUser.email != email) {
+      // No active user, or a different account than the one already active.
+      final newUserId = const Uuid().v4();
+      await db.createAndActivateUser(
+        UsersTableCompanion(
+          id: Value(newUserId),
+          email: Value(email),
+          name: Value(name),
+          avatarIndex: Value(avatarIndex),
+          selectedSubjects: Value(subjects ?? '[0]'),
+          isEmailValidated: const Value(true),
+          isActive: const Value(true),
+          createdAt: Value(DateTime.now()),
+          updatedAt: Value(DateTime.now()),
+        ),
+      );
+      if (activeUser != null && activeUser.id != newUserId) {
+        await db.migrateUserData(activeUser.id, newUserId);
+      }
+    }
+
+    ref.invalidate(activeUserStreamProvider);
   }
 
   void _handleGuestLogin(String email) {
@@ -207,20 +318,23 @@ class _AuthWrapperState extends ConsumerState<AuthWrapper> {
     } catch (e, st) { silentLog('root_navigator', e, st); }
   }
 
-  void _handleLogout() async {
-    await _performLogout();
-    if (mounted) {
-      setState(() {
-        _userEmail = '';
-        _appState = AppState.auth;
-      });
-    }
+  void _handleLogout() {
+    _forceLogoutToAuth();
   }
 
-  /// Logout that doesn't depend on widget state — used at start-up before
-  /// the first frame and by the InactivityWatcher.
+  /// Tear down the session (best-effort flush → revoke → local wipe) and return
+  /// to the login screen, dropping any pushed routes. Used by the logout
+  /// button, the InactivityWatcher, and the start-up expiry check.
   Future<void> _forceLogoutToAuth() async {
-    await _performLogout();
+    await ref.read(logoutCoordinatorProvider).teardown();
+    _resetToAuth();
+  }
+
+  /// Pop everything above the root route and show the auth screen. Also invoked
+  /// via [forceAuthScreenProvider] when logout is triggered from elsewhere —
+  /// a 401 on any endpoint, or a null active user in a pushed page.
+  void _resetToAuth() {
+    ref.read(oauthNavigatorKeyProvider).currentState?.popUntil((r) => r.isFirst);
     if (!mounted) return;
     setState(() {
       _userEmail = '';
@@ -228,29 +342,12 @@ class _AuthWrapperState extends ConsumerState<AuthWrapper> {
     });
   }
 
-  Future<void> _performLogout() async {
-    final apiClient = ref.read(apiClientProvider);
-    final session = ref.read(sessionMetaProvider);
-    final guest = ref.read(guestAuthServiceProvider);
-    final db = ref.read(appDatabaseProvider);
-
-    // Best-effort server token revoke. Network failure must not block local
-    // logout — a forgotten shared-device token still expires server-side via
-    // its TTL/hard cap.
-    try {
-      if (apiClient.isAuthenticated) {
-        await apiClient.post(ApiEndpoints.logout);
-      }
-    } catch (e, st) { silentLog('root_navigator', e, st); }
-
-    try { await session.clear(); } catch (e, st) { silentLog('root_navigator', e, st); }
-    try { guest.markForceNewGuest(); } catch (e, st) { silentLog('root_navigator', e, st); }
-    try { await apiClient.clearAuthToken(); } catch (e, st) { silentLog('root_navigator', e, st); }
-    try { await db.logoutUser(); } catch (e, st) { silentLog('root_navigator', e, st); }
-  }
-
   @override
   Widget build(BuildContext context) {
+    // When logout is triggered from outside this widget (a 401 on any endpoint,
+    // or a null active user in a pushed page), return to the login screen.
+    ref.listen<int>(forceAuthScreenProvider, (_, _) => _resetToAuth());
+
     final Widget screen;
     switch (_appState) {
       case AppState.loading:
@@ -266,6 +363,7 @@ class _AuthWrapperState extends ConsumerState<AuthWrapper> {
         screen = AuthPage(
           onEmailSubmit: _handleEmailSubmit,
           onPinLoginComplete: _handlePinLoginComplete,
+          onOAuthSuccess: _handleOAuthSuccess,
         );
         break;
       case AppState.emailVerification:

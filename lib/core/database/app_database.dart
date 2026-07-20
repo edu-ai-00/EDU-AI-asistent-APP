@@ -19,6 +19,8 @@ import 'tables/user_stats_table.dart';
 import 'tables/practice_cards_table.dart';
 import 'tables/review_logs_table.dart';
 import 'tables/student_fsrs_profiles_table.dart';
+import 'tables/work_heartbeats_table.dart';
+import 'tables/gpf_dimensions_table.dart';
 import 'package:eduai/core/util/silent_log.dart';
 
 part 'app_database.g.dart';
@@ -43,6 +45,8 @@ part 'app_database.g.dart';
   PracticeCardsTable,
   ReviewLogsTable,
   StudentFsrsProfilesTable,
+  WorkHeartbeatsTable,
+  GpfDimensionsTable,
 ])
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(driftDatabase(
@@ -57,7 +61,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.e);
 
   @override
-  int get schemaVersion => 13;
+  int get schemaVersion => 15;
 
   @override
   MigrationStrategy get migration {
@@ -129,8 +133,62 @@ class AppDatabase extends _$AppDatabase {
           await m.createTable(reviewLogsTable);
           await m.createTable(studentFsrsProfilesTable);
         }
+        // Add work_heartbeats table for work-time tracking in version 14.
+        if (from < 14) {
+          await m.createTable(workHeartbeatsTable);
+        }
+        // Add gpf_dimensions label cache in version 15 (BR-N2E9MF).
+        if (from < 15) {
+          await m.createTable(gpfDimensionsTable);
+        }
       },
     );
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Work Heartbeat Operations (BR-9SAH2R)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /// Insert one activity heartbeat.
+  Future<void> insertWorkHeartbeat(WorkHeartbeatsTableCompanion row) async {
+    await into(workHeartbeatsTable).insert(row, mode: InsertMode.insertOrIgnore);
+  }
+
+  /// Heartbeats not yet accepted by the server, oldest first, capped.
+  Future<List<WorkHeartbeatsTableData>> getUnsyncedWorkHeartbeats({int limit = 500}) {
+    return (select(workHeartbeatsTable)
+          ..where((t) => t.synced.equals(false))
+          ..orderBy([(t) => OrderingTerm.asc(t.occurredAt)])
+          ..limit(limit))
+        .get();
+  }
+
+  /// Delete heartbeats the server has accepted (by client_uuid).
+  Future<void> deleteWorkHeartbeats(List<String> clientUuids) async {
+    if (clientUuids.isEmpty) return;
+    await (delete(workHeartbeatsTable)
+          ..where((t) => t.clientUuid.isIn(clientUuids)))
+        .go();
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // GPF Dimension Label Operations (BR-N2E9MF)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /// All cached GPF dimension labels, ordered by vector index.
+  Future<List<GpfDimensionsTableData>> getGpfDimensions() {
+    return (select(gpfDimensionsTable)
+          ..orderBy([(t) => OrderingTerm.asc(t.dimensionIndex)]))
+        .get();
+  }
+
+  /// Replace the cached GPF dimension labels with [rows] in one transaction.
+  Future<void> replaceGpfDimensions(
+      List<GpfDimensionsTableCompanion> rows) async {
+    await transaction(() async {
+      await delete(gpfDimensionsTable).go();
+      await batch((b) => b.insertAll(gpfDimensionsTable, rows));
+    });
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -219,10 +277,25 @@ class AppDatabase extends _$AppDatabase {
       final duplicates = sorted.sublist(1);
 
       for (final dup in duplicates) {
-        // Migrate user_courses referencing the duplicate to the keeper.
-        await (update(userCoursesTable)
+        // Re-point enrollments from the duplicate onto the keeper, but collapse
+        // instead of colliding: if the user already has an enrollment on the
+        // keeper course, drop the duplicate's enrollment rather than create a
+        // second (userId, courseId) row — which would later crash lookups.
+        final dupEnrollments = await (select(userCoursesTable)
               ..where((uc) => uc.courseId.equals(dup.id)))
-            .write(UserCoursesTableCompanion(courseId: Value(keeper.id)));
+            .get();
+        for (final enr in dupEnrollments) {
+          final keeperEnrollment = await (select(userCoursesTable)
+                ..where((uc) =>
+                    uc.userId.equals(enr.userId) & uc.courseId.equals(keeper.id)))
+              .get();
+          if (keeperEnrollment.isEmpty) {
+            await (update(userCoursesTable)..where((uc) => uc.id.equals(enr.id)))
+                .write(UserCoursesTableCompanion(courseId: Value(keeper.id)));
+          } else {
+            await deleteUserCourse(enr.id);
+          }
+        }
 
         // Migrate user_progress referencing the duplicate.
         await (update(userProgressTable)
@@ -584,10 +657,22 @@ class AppDatabase extends _$AppDatabase {
   }
 
   /// Get a user course by user and course ID.
-  Future<UserCoursesTableData?> getUserCourseByUserAndCourse(String userId, String courseId) {
-    return (select(userCoursesTable)
+  /// Tolerant of duplicate rows (which historic dedup runs could leave behind):
+  /// prefers the server-linked enrollment, then the most recently updated.
+  Future<UserCoursesTableData?> getUserCourseByUserAndCourse(String userId, String courseId) async {
+    final results = await (select(userCoursesTable)
           ..where((uc) => uc.userId.equals(userId) & uc.courseId.equals(courseId)))
-        .getSingleOrNull();
+        .get();
+    if (results.isEmpty) return null;
+    if (results.length == 1) return results.first;
+    // Multiple matches — pick the best copy rather than throwing.
+    final sorted = List<UserCoursesTableData>.from(results)
+      ..sort((a, b) {
+        if (a.serverId != null && b.serverId == null) return -1;
+        if (a.serverId == null && b.serverId != null) return 1;
+        return b.updatedAt.compareTo(a.updatedAt);
+      });
+    return sorted.first;
   }
 
   /// Insert or update a user course.
@@ -602,6 +687,116 @@ class AppDatabase extends _$AppDatabase {
           ..limit(1))
         .get();
     return results.isEmpty ? null : results.first;
+  }
+
+  /// Find an existing enrollment for [userId] on ANY local course row that
+  /// shares the given course [serverId] or [courseId] string.
+  ///
+  /// A course update can leave two local `courses` rows for the same logical
+  /// course (same server course id, possibly a new local UUID / courseId
+  /// string). When the enrollment is pinned to the "old" row, a lookup keyed on
+  /// the freshly-resolved row's id misses and a duplicate enrollment gets
+  /// minted (BR-MFZF5R). Matching through every sibling course row prevents it.
+  Future<UserCoursesTableData?> findUserCourseByCourseIdentity(
+    String userId, {
+    int? serverId,
+    String? courseId,
+  }) async {
+    final courseIds = <String>{};
+    if (serverId != null) {
+      final byServer = await (select(coursesTable)
+            ..where((c) => c.serverId.equals(serverId)))
+          .get();
+      courseIds.addAll(byServer.map((c) => c.id));
+    }
+    if (courseId != null) {
+      final byCode = await (select(coursesTable)
+            ..where((c) => c.courseId.equals(courseId)))
+          .get();
+      courseIds.addAll(byCode.map((c) => c.id));
+    }
+    if (courseIds.isEmpty) return null;
+
+    final rows = await (select(userCoursesTable)
+          ..where((uc) =>
+              uc.userId.equals(userId) & uc.courseId.isIn(courseIds)))
+        .get();
+    if (rows.isEmpty) return null;
+    final sorted = List<UserCoursesTableData>.from(rows)
+      ..sort(_richestEnrollmentFirst);
+    return sorted.first;
+  }
+
+  /// Collapse duplicate enrollments that resolve to the same logical course.
+  ///
+  /// Two enrollments are duplicates when their course rows share a server
+  /// course id, or (lacking one) the same courseId string. Keeps the richest
+  /// copy — completed status, then highest progress, then server-linked, then
+  /// most recently updated — and deletes the rest. Returns the number removed.
+  ///
+  /// This is the read-side safety net for BR-MFZF5R: even if a twin enrollment
+  /// was already written, only one card is left standing and progress is never
+  /// lost to an empty duplicate.
+  Future<int> deduplicateUserCourses(String userId) async {
+    final enrollments = await (select(userCoursesTable)
+          ..where((uc) => uc.userId.equals(userId)))
+        .get();
+    if (enrollments.length < 2) return 0;
+
+    // Resolve each enrollment's logical-course identity key.
+    final courseById = <String, CoursesTableData?>{};
+    for (final e in enrollments) {
+      courseById.putIfAbsent(e.courseId, () => null);
+    }
+    for (final id in courseById.keys.toList()) {
+      courseById[id] = await getCourseById(id);
+    }
+
+    String identityKey(UserCoursesTableData e) {
+      final course = courseById[e.courseId];
+      if (course?.serverId != null) return 's:${course!.serverId}';
+      if (course != null && course.courseId.isNotEmpty) {
+        return 'c:${course.courseId}';
+      }
+      return 'f:${e.courseId}';
+    }
+
+    final grouped = <String, List<UserCoursesTableData>>{};
+    for (final e in enrollments) {
+      grouped.putIfAbsent(identityKey(e), () => []).add(e);
+    }
+
+    var removed = 0;
+    for (final group in grouped.values) {
+      if (group.length <= 1) continue;
+      final sorted = List<UserCoursesTableData>.from(group)
+        ..sort(_richestEnrollmentFirst);
+      for (final dup in sorted.sublist(1)) {
+        await deleteUserCourse(dup.id);
+        removed++;
+      }
+    }
+    return removed;
+  }
+
+  /// Comparator ordering the "best" enrollment copy first: completed status,
+  /// then higher progress, then more completed lessons, then server-linked,
+  /// then most recently updated.
+  static int _richestEnrollmentFirst(
+      UserCoursesTableData a, UserCoursesTableData b) {
+    final aDone = a.status == 'completed' ? 1 : 0;
+    final bDone = b.status == 'completed' ? 1 : 0;
+    if (aDone != bDone) return bDone - aDone;
+    if (a.progressPercent != b.progressPercent) {
+      return b.progressPercent - a.progressPercent;
+    }
+    if (a.completedLessons != b.completedLessons) {
+      return b.completedLessons - a.completedLessons;
+    }
+    final aServer = a.serverId != null ? 1 : 0;
+    final bServer = b.serverId != null ? 1 : 0;
+    if (aServer != bServer) return bServer - aServer;
+    return b.updatedAt.compareTo(a.updatedAt);
   }
 
   /// Delete a user course by local ID.
@@ -878,6 +1073,9 @@ class AppDatabase extends _$AppDatabase {
       await delete(userAchievementsTable).go();
       await delete(gamificationConfigTable).go();
       await delete(bookmarksTable).go();
+      await delete(userEloProfileTable).go();
+      await delete(blockStatsTable).go();
+      await delete(workHeartbeatsTable).go();
       await delete(syncQueueTable).go();
       await delete(userProgressTable).go();
       await delete(userStatsTable).go();
@@ -1066,6 +1264,23 @@ class AppDatabase extends _$AppDatabase {
     return (select(practiceCardsTable)
           ..where((c) => c.syncStatus.equals(1)))
         .get();
+  }
+
+  /// Mark a practice card as synced (syncStatus=0) after a successful push,
+  /// optionally recording the server id. Guarded on [sentUpdatedAt] so a card
+  /// that was re-edited locally while the push was in flight stays pending and
+  /// is re-pushed on the next cycle.
+  Future<void> markPracticeCardSynced(
+    String id,
+    DateTime sentUpdatedAt, {
+    String? serverId,
+  }) {
+    return (update(practiceCardsTable)
+          ..where((c) => c.id.equals(id) & c.updatedAt.equals(sentUpdatedAt)))
+        .write(PracticeCardsTableCompanion(
+      syncStatus: const Value(0),
+      serverId: serverId != null ? Value(serverId) : const Value.absent(),
+    ));
   }
 
   /// Count due practice cards for a user (isActive=true, dueDate <= now).

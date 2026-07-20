@@ -20,7 +20,7 @@ class ChatyPage extends ConsumerStatefulWidget {
 
 class _ChatyPageState extends ConsumerState<ChatyPage> {
   int _selectedFilterIndex = 0;
-  final List<String> _filters = [AppStrings.filterAll, AppStrings.filterInProgress, 'Ukončené'];
+  final List<String> _filters = [AppStrings.filterAll, AppStrings.filterInProgress, AppStrings.chatyEndedFilter];
 
   @override
   Widget build(BuildContext context) {
@@ -46,7 +46,7 @@ class _ChatyPageState extends ConsumerState<ChatyPage> {
                     const Icon(Icons.wifi_off, size: 18, color: Colors.white),
                     const SizedBox(width: 8),
                     Text(
-                      'Nejsi online',
+                      AppStrings.chatyOfflineBanner,
                       style: AppTextStyles.caption(color: Colors.white),
                     ),
                   ],
@@ -82,7 +82,7 @@ class _ChatyPageState extends ConsumerState<ChatyPage> {
                     ? _buildEmptyState()
                     : _buildSessionList(sessions, context),
                 loading: () => const Center(child: CircularProgressIndicator()),
-                error: (e, _) => Center(child: Text('Error: $e')),
+                error: (e, _) => Center(child: Text(AppStrings.genericError(e.toString()))),
               ),
             ),
             _buildInfoBanner(),
@@ -128,7 +128,7 @@ class _ChatyPageState extends ConsumerState<ChatyPage> {
                   ),
                   const SizedBox(width: 6),
                   Text(
-                    'Nový chat',
+                    AppStrings.chatyNewChat,
                     style: AppTextStyles.actionSmall(color: Colors.white),
                   ),
                 ],
@@ -354,6 +354,7 @@ class _ChatyPageState extends ConsumerState<ChatyPage> {
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             Text(persona.emoji, style: const TextStyle(fontSize: 28)),
             const SizedBox(width: 8),
@@ -361,6 +362,9 @@ class _ChatyPageState extends ConsumerState<ChatyPage> {
               child: Text(
                 persona.displayName,
                 style: AppTextStyles.labelMedium(),
+                textAlign: TextAlign.center,
+                softWrap: true,
+                maxLines: 2,
                 overflow: TextOverflow.ellipsis,
               ),
             ),
@@ -423,7 +427,7 @@ class _ChatyPageState extends ConsumerState<ChatyPage> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('Zrušit'),
+            child: Text(AppStrings.actionCancel),
           ),
           TextButton(
             onPressed: () async {
@@ -460,10 +464,10 @@ class _ChatyPageState extends ConsumerState<ChatyPage> {
 
   String _formatRelativeTime(DateTime dateTime) {
     final diff = DateTime.now().difference(dateTime);
-    if (diff.inMinutes < 1) return 'teď';
-    if (diff.inMinutes < 60) return 'před ${diff.inMinutes} min';
-    if (diff.inHours < 24) return 'před ${diff.inHours} hod';
-    if (diff.inDays < 7) return 'před ${diff.inDays} d';
+    if (diff.inMinutes < 1) return AppStrings.chatyTimeNow;
+    if (diff.inMinutes < 60) return AppStrings.timeMinutesAgo(diff.inMinutes);
+    if (diff.inHours < 24) return AppStrings.timeHoursAgo(diff.inHours);
+    if (diff.inDays < 7) return AppStrings.timeDaysAgoShort(diff.inDays);
     return '${dateTime.day}.${dateTime.month}.';
   }
 }

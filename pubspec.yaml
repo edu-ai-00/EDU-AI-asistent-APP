@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.0.12+12
+version: 1.0.17+19
 
 environment:
   sdk: ^3.10.0
@@ -68,6 +68,21 @@ dependencies:
   drift_flutter: ^0.2.8
   fsrs: ^2.0.1
 
+  # OAuth
+  aad_oauth: ^1.0.1
+  google_sign_in: ^7.2.0
+  # Web-only: needed to render the GIS sign-in button (web has no imperative
+  # authenticate()). Imported solely from google_web_button_web.dart.
+  google_sign_in_web: ^1.1.3
+  google_sign_in_platform_interface: ^3.1.0
+  sign_in_with_apple: ^7.0.1
+
+  # Routing (web URL deep-linking for legal pages)
+  go_router: ^14.6.2
+  url_launcher: ^6.3.1
+  flutter_web_plugins:
+    sdk: flutter
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -96,10 +111,13 @@ flutter:
 
   assets:
     - assets/
+    - assets/gpf/
     - assets/icons/
     - assets/images/
     - assets/courses/
     - assets/themes/
+    - assets/legal/cs/
+    - assets/legal/en/
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

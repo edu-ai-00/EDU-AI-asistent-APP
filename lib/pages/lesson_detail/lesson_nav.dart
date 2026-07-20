@@ -104,7 +104,7 @@ class LessonNav extends StatelessWidget {
                           const Icon(Icons.bookmark_outlined, color: Colors.white, size: 20),
                           const SizedBox(width: 8),
                           Text(
-                            'Cvičení',
+                            AppStrings.courseExercise,
                             style: AppTextStyles.statValue(color: Colors.white),
                           ),
                         ],
@@ -130,7 +130,7 @@ class LessonNav extends StatelessWidget {
                           const Icon(Icons.quiz_outlined, color: Colors.white, size: 20),
                           const SizedBox(width: 8),
                           Text(
-                            'Kvíz',
+                            AppStrings.courseQuiz,
                             style: AppTextStyles.statValue(color: Colors.white),
                           ),
                         ],

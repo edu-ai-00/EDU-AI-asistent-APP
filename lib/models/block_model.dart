@@ -3,6 +3,8 @@
 /// Blocks contain steps which are the atomic units of content display.
 /// Steps can be static (pre-defined) or AI-scaffolded (generated).
 
+import '../core/strings/app_strings.dart';
+
 /// Type of block
 enum BlockType {
   // New atomic types (V2 simplified)
@@ -244,25 +246,6 @@ class StepVideo {
 
   factory StepVideo.fromJson(Map<String, dynamic> json) {
     return StepVideo(url: json['url'] as String? ?? '');
-  }
-
-  /// Extract YouTube video ID from various URL formats.
-  /// Supports: youtube.com/watch?v=ID, youtu.be/ID, youtube.com/embed/ID,
-  /// youtube-nocookie.com/embed/ID
-  static String? extractYouTubeId(String url) {
-    // youtube.com/watch?v=ID or youtube-nocookie.com/watch?v=ID
-    final watchMatch = RegExp(r'youtube(?:-nocookie)?\.com/watch\?.*v=([a-zA-Z0-9_-]{11})').firstMatch(url);
-    if (watchMatch != null) return watchMatch.group(1);
-
-    // youtu.be/ID
-    final shortMatch = RegExp(r'youtu\.be/([a-zA-Z0-9_-]{11})').firstMatch(url);
-    if (shortMatch != null) return shortMatch.group(1);
-
-    // youtube.com/embed/ID or youtube-nocookie.com/embed/ID
-    final embedMatch = RegExp(r'youtube(?:-nocookie)?\.com/embed/([a-zA-Z0-9_-]{11})').firstMatch(url);
-    if (embedMatch != null) return embedMatch.group(1);
-
-    return null;
   }
 }
 
@@ -973,22 +956,22 @@ class BlockStep {
     switch (type) {
       case StepType.display:
       case StepType.text:
-        return 'Obsah';
+        return AppStrings.blockDisplayTitleContent;
       case StepType.evaluation:
       case StepType.question:
-        return 'Otázka';
+        return AppStrings.blockDisplayTitleQuestion;
       case StepType.hint:
-        return 'Nápověda';
+        return AppStrings.blockDisplayTitleHint;
       case StepType.displaySolution:
-        return 'Řešení';
+        return AppStrings.blockDisplayTitleSolution;
       case StepType.displayTask:
-        return 'Úkol';
+        return AppStrings.blockDisplayTitleTask;
       case StepType.image:
-        return 'Obrázek';
+        return AppStrings.blockDisplayTitleImage;
       case StepType.video:
-        return 'Video';
+        return AppStrings.blockDisplayTitleVideo;
       case StepType.audio:
-        return 'Audio';
+        return AppStrings.blockDisplayTitleAudio;
     }
   }
 
@@ -1318,7 +1301,9 @@ class ContentBlock {
         final titleMatch = RegExp(r'<h[23][^>]*>([^<]+)</h[23]>').firstMatch(content!);
         if (titleMatch != null) return titleMatch.group(1) ?? '';
       }
-      return type == BlockType.question ? 'Otázka' : 'Obsah';
+      return type == BlockType.question
+          ? AppStrings.blockDisplayTitleQuestion
+          : AppStrings.blockDisplayTitleContent;
     }
 
     // Legacy step-based: try to get title from first display step
@@ -1329,7 +1314,9 @@ class ContentBlock {
     }
     // Fallback to learning objective or block type
     if (learning?.objective != null) return learning!.objective!;
-    return type == BlockType.learning ? 'Učivo' : 'Cvičení';
+    return type == BlockType.learning
+        ? AppStrings.blockDisplayTitleLearning
+        : AppStrings.blockDisplayTitleExercise;
   }
 
   /// Get the main content text (for display)
@@ -1439,6 +1426,7 @@ class ContentBlock {
     bool? isDisliked,
     int? currentStepIndex,
     String? selectedOptionId,
+    bool? defaultPractice,
   }) {
     return ContentBlock(
       blockId: blockId,
@@ -1455,7 +1443,7 @@ class ContentBlock {
       atomicImage: atomicImage,
       atomicVideo: atomicVideo,
       atomicQuestion: atomicQuestion,
-      defaultPractice: defaultPractice,
+      defaultPractice: defaultPractice ?? this.defaultPractice,
       isCompleted: isCompleted ?? this.isCompleted,
       isBookmarked: isBookmarked ?? this.isBookmarked,
       isLiked: isLiked ?? this.isLiked,
@@ -1477,7 +1465,7 @@ class LessonBlockBinding {
     required this.blockId,
     this.order = 0,
     this.bgColor,
-    this.defaultPractice = true,
+    this.defaultPractice = false,
   });
 
   factory LessonBlockBinding.fromJson(Map<String, dynamic> json) {
@@ -1485,7 +1473,7 @@ class LessonBlockBinding {
       blockId: json['block_id'] as String? ?? '',
       order: json['order'] as int? ?? 0,
       bgColor: json['bg_color'] as String?,
-      defaultPractice: json['default_practice'] as bool? ?? true,
+      defaultPractice: json['default_practice'] as bool? ?? false,
     );
   }
 }
@@ -1543,13 +1531,30 @@ class BlockLoader {
           .toList();
     }
 
+    // `default_practice` can live in EITHER place depending on how the course
+    // was authored: on the global block definition (e.g. A2-Rovnice) or on the
+    // lesson→block reference / binding (e.g. demo Zlomky). Treat the block as a
+    // practice block if EITHER says so — a binding's default (false) must not
+    // override a global true, and vice versa.
+    final practiceFlags = <String, bool>{};
+    for (final binding in getBlockBindingsForLesson(
+      courseData: courseData,
+      lessonId: lessonId,
+    )) {
+      practiceFlags[binding.blockId] = binding.defaultPractice;
+    }
+
     // Find and parse each block
     final result = <ContentBlock>[];
     for (final blockId in blockIds) {
       for (final b in blocks) {
         final blockJson = b as Map<String, dynamic>;
         if (blockJson['block_id'] == blockId) {
-          result.add(ContentBlock.fromJson(blockJson));
+          final block = ContentBlock.fromJson(blockJson);
+          final bindingPractice = practiceFlags[blockId] ?? false;
+          result.add(block.defaultPractice || bindingPractice
+              ? block.copyWith(defaultPractice: true)
+              : block);
           break;
         }
       }

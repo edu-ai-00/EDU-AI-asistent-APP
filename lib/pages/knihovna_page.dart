@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/providers/core_providers.dart';
+import '../core/services/course_enroll_service.dart';
 import '../core/theme/app_theme.dart';
-import '../core/util/pin_formatter.dart';
+import '../core/widgets/code_input_field.dart';
 import '../data/repositories/course_repository.dart';
 import '../models/course_model.dart' as models;
 import 'course_detail_page.dart';
@@ -30,12 +30,8 @@ class _KnihovnaPageState extends ConsumerState<KnihovnaPage> {
   final Map<String, int> _downloadedVersions = {};
   final Map<String, ({int completed, int total})> _courseProgress = {};
 
-  // 6-digit PIN input for course code
-  final List<TextEditingController> _pinControllers = List.generate(
-    6,
-    (_) => TextEditingController(),
-  );
-  final List<FocusNode> _focusNodes = List.generate(6, (_) => FocusNode());
+  // 6-char course code input — single field rendered as boxes
+  final CodeInputController _codeController = CodeInputController();
   bool _isLookingUpCode = false;
   String? _codeError;
 
@@ -51,57 +47,31 @@ class _KnihovnaPageState extends ConsumerState<KnihovnaPage> {
 
   @override
   void dispose() {
-    for (var controller in _pinControllers) {
-      controller.dispose();
-    }
-    for (var node in _focusNodes) {
-      node.dispose();
-    }
+    _codeController.dispose();
     super.dispose();
   }
 
-  String get _pin => _pinControllers.map((c) => c.text).join();
+  String get _pin => _codeController.code;
 
-  void _onPinChanged(int index, String value) {
-    // Clear error when user types
+  void _onCodeChanged(String value) {
+    // Only clear the error while the user is actively typing. A programmatic
+    // clear after an invalid submit empties the field and fires onChanged('')
+    // synchronously — it must NOT wipe the just-set error, or the code silently
+    // disappears with no feedback (BR-ANKRJP).
+    if (value.isEmpty) return;
     if (_codeError != null) {
       setState(() => _codeError = null);
     }
-
-    if (value.isNotEmpty && index < 5) {
-      _focusNodes[index + 1].requestFocus();
-    }
-
-    // Auto-submit when all 6 chars entered
-    if (_pin.length == 6) {
-      _lookupCourseByCode();
-    }
-
-    setState(() {});
   }
 
-  void _handleKeyPress(int index, KeyEvent event) {
-    if (event is! KeyDownEvent) return;
-    if (event.logicalKey == LogicalKeyboardKey.backspace &&
-        _pinControllers[index].text.isEmpty &&
-        index > 0) {
-      _focusNodes[index - 1].requestFocus();
-    } else if (event.logicalKey == LogicalKeyboardKey.enter && _pin.length == 6) {
-      _lookupCourseByCode();
-    }
-  }
+  void _clearPin() => _codeController.clear();
 
-  void _clearPin() {
-    for (var controller in _pinControllers) {
-      controller.clear();
-    }
-    // Request focus after rebuild so the TextField is enabled again
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _focusNodes[0].requestFocus();
-    });
-  }
-
-  /// Lookup and download course by code, then navigate to it
+  /// Lookup and download course by code, then navigate to it.
+  ///
+  /// Delegates the resolve+enroll+download steps to the shared
+  /// [enrollCourseByCode] service so the manual code input and the /course|/pin
+  /// deep links behave identically; this method only maps the outcome to the
+  /// input's error text and navigates on success.
   Future<void> _lookupCourseByCode() async {
     final code = _pin;
     if (code.length < 6) {
@@ -114,126 +84,50 @@ class _KnihovnaPageState extends ConsumerState<KnihovnaPage> {
       _codeError = null;
     });
 
-    try {
-      final courseRepo = ref.read(courseRepositoryProvider);
-      final userCourseRepo = ref.read(userCourseRepositoryProvider);
-      final db = ref.read(appDatabaseProvider);
+    final outcome = await enrollCourseByCode(ref, code);
+    if (!mounted) return;
 
-      // Step 1: Find course by code
-      final course = await courseRepo.findCourseByCode(code);
-      if (course == null) {
-        setState(() {
-          _isLookingUpCode = false;
-          _codeError = AppStrings.libraryCodeNotFound(code);
-        });
-        _clearPin();
-        return;
-      }
-
-      // Step 1.5: Block guests from logged_only courses
-      // Allow if user has an email OR is server-authenticated (student PIN login,
-      // detected via local isEmailValidated flag OR Sanctum token presence).
-      if (course.data['logged_only'] == true) {
-        final activeUser = await db.getActiveUser();
-        final hasToken = ref.read(apiClientProvider).isAuthenticated;
-        if (activeUser == null ||
-            (activeUser.email.isEmpty &&
-                !activeUser.isEmailValidated &&
-                !hasToken)) {
-          setState(() {
-            _isLookingUpCode = false;
-            _codeError = AppStrings.authLoginRequired;
-          });
-          _clearPin();
-          return;
-        }
-      }
-
-      // Step 2: Get current user
-      final user = await db.getActiveUser();
-      if (user == null) {
-        setState(() {
-          _isLookingUpCode = false;
-          _codeError = AppStrings.libraryLoginRequired;
-        });
-        _clearPin();
-        return;
-      }
-
-      // Step 3: Add course to user's library
-      await userCourseRepo.startCourse(
-        userId: user.id,
-        courseId: course.id,
-      );
-
-      // Step 4: Download full course JSON from R2
-      await courseRepo.downloadFullCourseJson(course.id);
-
-      // Step 4.5: Sync downloadedVersion with actual courses.version
-      // (downloadFullCourseJson step 0 may have bumped it via server check)
-      final courseRow = await db.getCourseById(course.id);
-      final userCourse = await db.getUserCourseByUserAndCourse(user.id, course.id);
-      if (userCourse != null && courseRow != null) {
-        await db.updateUserCourseDownloadedVersion(
-          id: userCourse.id,
-          downloadedVersion: courseRow.version,
-        );
-      }
-
-      // Step 5: Get the full course data for navigation
-      final fullCourse = await courseRepo.getCourseById(course.id);
-      if (fullCourse == null) {
-        setState(() {
-          _isLookingUpCode = false;
-          _codeError = AppStrings.libraryLoadError;
-        });
-        _clearPin();
-        return;
-      }
-
-      // Step 6.5: Block re-entry for only_once completed courses
-      if (fullCourse.data['only_once'] == true &&
-          userCourse != null &&
-          userCourse.status == 'completed') {
-        setState(() {
-          _isLookingUpCode = false;
-          _codeError = AppStrings.libraryCourseAlreadyCompleted;
-        });
-        _clearPin();
-        return;
-      }
-
-      // Step 7: Clear the input
-      _clearPin();
+    if (!outcome.isSuccess) {
       setState(() {
         _isLookingUpCode = false;
-        _downloadedVersions[course.id] = courseRow?.version ?? course.version;
-      });
-
-      // Step 8: Navigate to course detail
-      if (mounted) {
-        final courseModel = models.Course.fromJsonData(
-          id: fullCourse.id,
-          data: fullCourse.data,
-          completedLessons: userCourse?.completedLessons ?? 0,
-          isCompleted: userCourse?.status == 'completed',
-        );
-
-        Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) => CourseDetailPage(
-              course: courseModel,
-              userCourseId: userCourse?.id,
-            ),
-          ),
-        );
-      }
-    } catch (e) {
-      setState(() {
-        _isLookingUpCode = false;
-        _codeError = AppStrings.genericError('$e');
+        _codeError = _enrollErrorText(outcome);
       });
       _clearPin();
+      return;
+    }
+
+    _clearPin();
+    setState(() {
+      _isLookingUpCode = false;
+      _downloadedVersions[outcome.course!.id] =
+          outcome.downloadedVersion ?? _downloadedVersions[outcome.course!.id] ?? 0;
+    });
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => CourseDetailPage(
+          course: outcome.course!,
+          userCourseId: outcome.userCourseId,
+        ),
+      ),
+    );
+  }
+
+  String _enrollErrorText(EnrollOutcome outcome) {
+    switch (outcome.error) {
+      case EnrollErrorKind.codeShort:
+        return AppStrings.libraryCodeShort;
+      case EnrollErrorKind.notFound:
+        return AppStrings.libraryCodeNotFound(outcome.code);
+      case EnrollErrorKind.loginRequired:
+        return AppStrings.libraryLoginRequired;
+      case EnrollErrorKind.alreadyCompleted:
+        return AppStrings.libraryCourseAlreadyCompleted;
+      case EnrollErrorKind.loadError:
+        return AppStrings.libraryLoadError;
+      case EnrollErrorKind.generic:
+      case null:
+        return AppStrings.genericError(outcome.message ?? '');
     }
   }
 
@@ -268,22 +162,21 @@ class _KnihovnaPageState extends ConsumerState<KnihovnaPage> {
     final user = await db.getActiveUser();
 
     if (user == null) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(AppStrings.libraryLoginRequired)),
-        );
-      }
+      // No active user means the session was wiped (e.g. shared-device
+      // inactivity logout). Return to login cleanly instead of stranding the
+      // user on a library page that can never download.
+      ref.read(logoutCoordinatorProvider).forceLogoutToLogin();
       return;
     }
 
     // Block guests from logged_only courses.
-    // Allow if user has an email OR is server-authenticated (student PIN login,
-    // detected via local isEmailValidated flag OR Sanctum token presence).
-    final hasTokenDl = ref.read(apiClientProvider).isAuthenticated;
+    // Allow only real accounts: a user with an email OR a server-authenticated
+    // student PIN login (flagged locally via isEmailValidated). Guests hold a
+    // Sanctum token too, so token presence must NOT count as logged in
+    // (BR-N2ENN4).
     if (course.data['logged_only'] == true &&
         user.email.isEmpty &&
-        !user.isEmailValidated &&
-        !hasTokenDl) {
+        !user.isEmailValidated) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -451,15 +344,14 @@ class _KnihovnaPageState extends ConsumerState<KnihovnaPage> {
     if (fullCourse == null || !mounted) return;
 
     // Block guests from logged_only courses.
-    // Allow if user has an email OR is server-authenticated (student PIN login,
-    // detected via local isEmailValidated flag OR Sanctum token presence).
+    // Allow only real accounts: a user with an email OR a server-authenticated
+    // student PIN login (flagged locally via isEmailValidated). Guests hold a
+    // Sanctum token too, so token presence must NOT count as logged in
+    // (BR-N2ENN4).
     if (fullCourse.data['logged_only'] == true) {
       final activeUser = user ?? await db.getActiveUser();
-      final hasToken = ref.read(apiClientProvider).isAuthenticated;
       if (activeUser == null ||
-          (activeUser.email.isEmpty &&
-              !activeUser.isEmailValidated &&
-              !hasToken)) {
+          (activeUser.email.isEmpty && !activeUser.isEmailValidated)) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -502,6 +394,10 @@ class _KnihovnaPageState extends ConsumerState<KnihovnaPage> {
 
     return Scaffold(
       backgroundColor: AppColors.background,
+      // MainScreen's outer Scaffold already resizes for the keyboard.
+      // Letting this inner Scaffold resize too double-counts the keyboard
+      // inset, squeezing the code-input card off-screen.
+      resizeToAvoidBottomInset: false,
       body: SafeArea(
         bottom: false,
         child: Column(
@@ -673,72 +569,18 @@ class _KnihovnaPageState extends ConsumerState<KnihovnaPage> {
             style: AppTextStyles.statValueAlt(),
           ),
           const SizedBox(height: 12),
-          // 6-digit PIN input
+          // 6-char course code input — single field rendered as boxes
           ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 360),
-            child: Row(
-              children: List.generate(6, (index) {
-                return [
-                  if (index > 0) const SizedBox(width: 8),
-                  Expanded(
-                    child: SizedBox(
-                      height: 56,
-                      child: KeyboardListener(
-                        focusNode: FocusNode(),
-                        onKeyEvent: (event) => _handleKeyPress(index, event),
-                        child: TextField(
-                          controller: _pinControllers[index],
-                          focusNode: _focusNodes[index],
-                          keyboardType: TextInputType.text,
-                          textCapitalization: TextCapitalization.characters,
-                          textAlign: TextAlign.center,
-                          maxLength: 1,
-                          enabled: !_isLookingUpCode,
-                          inputFormatters: [
-                            UpperCaseAlphanumericFormatter(),
-                          ],
-                          style: AppTextStyles.heading3Alt(),
-                          decoration: InputDecoration(
-                            counterText: '',
-                            contentPadding: const EdgeInsets.symmetric(vertical: 12),
-                            filled: true,
-                            fillColor: AppColors.background,
-                            border: OutlineInputBorder(
-                              borderRadius: AppDecorations.radiusS,
-                              borderSide: BorderSide(
-                                color: AppColors.primaryDark16,
-                                width: 1,
-                              ),
-                            ),
-                            enabledBorder: OutlineInputBorder(
-                              borderRadius: AppDecorations.radiusS,
-                              borderSide: BorderSide(
-                                color: AppColors.primaryDark16,
-                                width: 1,
-                              ),
-                            ),
-                            focusedBorder: OutlineInputBorder(
-                              borderRadius: AppDecorations.radiusS,
-                              borderSide: BorderSide(
-                                color: AppColors.primary,
-                                width: 2,
-                              ),
-                            ),
-                            disabledBorder: OutlineInputBorder(
-                              borderRadius: AppDecorations.radiusS,
-                              borderSide: BorderSide(
-                                color: AppColors.primaryDark08,
-                                width: 1,
-                              ),
-                            ),
-                          ),
-                          onChanged: (value) => _onPinChanged(index, value),
-                        ),
-                      ),
-                    ),
-                  ),
-                ];
-              }).expand((e) => e).toList(),
+            child: CodeInputField(
+              length: 6,
+              controller: _codeController,
+              autofocus: false,
+              hasError: _codeError != null,
+              onChanged: _onCodeChanged,
+              onCompleted: (_) {
+                if (!_isLookingUpCode) _lookupCourseByCode();
+              },
             ),
           ),
           // Error message
@@ -828,10 +670,21 @@ class _KnihovnaPageState extends ConsumerState<KnihovnaPage> {
     final description = data['description'] as String?;
     final badge = data['badge'] as String?;
     final lessons = data['lessons'] as List<dynamic>?;
-    final lessonCount = lessons?.length ?? 0;
-    // Sum block durations (matches course detail page) instead of estimating
-    // 20 min/lesson, so library and in-course duration agree.
-    final totalMinutes = models.Course.totalCourseMinutes(data);
+    // Fall back to the denormalized lesson_count from the listing API when the
+    // full lessons array hasn't been downloaded yet.
+    final lessonCount = (lessons?.isNotEmpty ?? false)
+        ? lessons!.length
+        : (data['lesson_count'] as int? ?? 0);
+    // Full course JSON carries a top-level `blocks` array; the lightweight
+    // listing data (not-yet-downloaded courses) only has placeholder lessons.
+    final hasFullContent = (data['blocks'] as List<dynamic>?)?.isNotEmpty ?? false;
+    // For downloaded courses, sum block durations (matches the course detail
+    // page) so library and in-course duration agree. Otherwise fall back to the
+    // listing's estimated_minutes — the placeholder lessons have no blocks and
+    // would otherwise yield a bogus ~5 min/lesson estimate.
+    final totalMinutes = hasFullContent
+        ? models.Course.totalCourseMinutes(data)
+        : (data['estimated_minutes'] as int? ?? 0);
 
     return Container(
       decoration: BoxDecoration(

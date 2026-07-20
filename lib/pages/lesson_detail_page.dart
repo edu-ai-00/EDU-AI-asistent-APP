@@ -9,6 +9,7 @@ import '../core/elo/elo_engine.dart';
 import '../core/gamification/achievement_evaluator.dart';
 import '../core/providers/core_providers.dart';
 import '../core/providers/bookmark_provider.dart';
+import '../core/providers/practice_providers.dart';
 import '../models/chat_models.dart';
 import 'chat_detail_page.dart';
 import '../core/sync/sync_queue.dart';
@@ -146,6 +147,13 @@ class _LessonDetailPageState extends ConsumerState<LessonDetailPage> {
     super.initState();
     _scrollController = ScrollController();
 
+    // Track active work time while this lesson is open (BR-9SAH2R).
+    ref.read(workTimeTrackerProvider).setLocation(
+          courseId: widget.course.id,
+          lessonId: widget.lesson.id,
+          context: 'lesson',
+        );
+
     // Try to load blocks from course JSON (v2 format)
     if (widget.course.hasBlockV2Data) {
       _contentBlocks = widget.course.getBlocksForLesson(widget.lesson.id);
@@ -204,6 +212,7 @@ class _LessonDetailPageState extends ConsumerState<LessonDetailPage> {
 
   @override
   void dispose() {
+    ref.read(workTimeTrackerProvider).clearLocation();
     _scrollController.dispose();
     for (final controller in _textControllers.values) {
       controller.dispose();
@@ -232,6 +241,17 @@ class _LessonDetailPageState extends ConsumerState<LessonDetailPage> {
   Future<void> _confirmBlock(int index, {int earnedXp = 0, double scoreKoef = 1.0}) async {
     if (index != _currentBlockIndex) {
       return;
+    }
+
+    // Wrong atomic answer → seed a Practice (Cvičení) card before advancing.
+    // V2 step blocks handle this via BlockStepEngine's onWrongAnswer callback.
+    if (_useContentBlocks && index >= 0 && index < _contentBlocks.length) {
+      final block = _contentBlocks[index];
+      if (block.isAtomicFormat &&
+          block.isQuestionBlock &&
+          _atomicAnswerIsWrong(block)) {
+        _autoBookmarkOnWrong(index);
+      }
     }
 
     setState(() {
@@ -427,6 +447,19 @@ class _LessonDetailPageState extends ConsumerState<LessonDetailPage> {
 
       // Enqueue interaction log (CREATE — append-only server log)
       final interactionId = 'elo-${DateTime.now().microsecondsSinceEpoch}';
+
+      // Resolve opened/confirmed timestamps for the ELO export.
+      // - opened_at: when the block was first revealed (already tracked).
+      // - confirmed_at: when the answer was submitted (ts_answer_submit ms epoch).
+      //   Falls back to "now" if the submit timestamp wasn't captured.
+      final openedIso = _blockTimestamps[block.blockId];
+      final submitMs = _blockTimestampData[blockIndex]?['ts_answer_submit'] as int?;
+      final confirmedIso = (submitMs != null
+              ? DateTime.fromMillisecondsSinceEpoch(submitMs, isUtc: true)
+              : DateTime.now().toUtc())
+          .toIso8601String();
+      final timeOnTaskMs = _calculateTimeOnTask(blockIndex);
+
       await syncQueue.enqueue(
         tableName: 'elo_interactions',
         recordId: interactionId,
@@ -443,9 +476,12 @@ class _LessonDetailPageState extends ConsumerState<LessonDetailPage> {
           'updated_indices': result.updatedIndices,
           'ts_bubble_open': _blockTimestampData[blockIndex]?['ts_bubble_open'],
           'ts_answer_click': _blockTimestampData[blockIndex]?['ts_answer_click'],
-          'ts_answer_submit': _blockTimestampData[blockIndex]?['ts_answer_submit'],
+          'ts_answer_submit': submitMs,
           'attempt_count': _blockTimestampData[blockIndex]?['attempt_count'] ?? 0,
-          'time_on_task_ms': _calculateTimeOnTask(blockIndex),
+          'time_on_task_ms': timeOnTaskMs,
+          if (openedIso != null) 'opened_at': openedIso,
+          'confirmed_at': confirmedIso,
+          if (timeOnTaskMs != null) 'duration_ms': timeOnTaskMs,
         },
       );
 
@@ -521,6 +557,27 @@ class _LessonDetailPageState extends ConsumerState<LessonDetailPage> {
         if (!wasAlreadyCompleted) {
           final statsRepo = ref.read(userStatsRepositoryProvider);
           await statsRepo.awardTrophy(user.id);
+        }
+
+        // Seed FSRS practice cards for this lesson's default_practice
+        // blocks (no-op for blocks that already have a card).
+        try {
+          final createdCards =
+              await ref.read(practiceRepositoryProvider).createCardsFromLesson(
+                    userId: user.id,
+                    courseId: widget.course.id,
+                    lessonId: widget.lesson.id,
+                    blocks: widget.course.getBlocksForLesson(widget.lesson.id),
+                  );
+          // Cards are written straight to Drift; the practice queue providers
+          // are plain (cached) FutureProviders, so without this the dashboard
+          // count and the practice quiz keep showing the stale pre-lesson value
+          // until the next reload. Invalidate so they recompute now. (BR-7R5NFZ)
+          if (createdCards > 0) {
+            ref.invalidate(practiceQueueProvider);
+          }
+        } catch (e, st) {
+          silentLog('lesson_detail_page:seed_cards', e, st);
         }
       }
       // Force-sync so progress reaches the server immediately
@@ -888,7 +945,11 @@ class _LessonDetailPageState extends ConsumerState<LessonDetailPage> {
         // Also persist step_progress + block_feedback to user_progress table
         // so they sync via POST /api/user/progress as well.
         final user = ref.read(activeUserProvider).valueOrNull;
-        if (user != null && (stepProgressJson.isNotEmpty || blockFeedback.isNotEmpty)) {
+        final hasProgressData = stepProgressJson.isNotEmpty ||
+            blockFeedback.isNotEmpty ||
+            blockTimestampsJson.isNotEmpty ||
+            _hintHelpTracking.isNotEmpty;
+        if (user != null && hasProgressData) {
           final progressRepo = ref.read(userProgressRepositoryProvider);
           await progressRepo.mergeProgressData(
             userId: user.id,
@@ -897,6 +958,11 @@ class _LessonDetailPageState extends ConsumerState<LessonDetailPage> {
             dataToMerge: {
               if (stepProgressJson.isNotEmpty) 'step_progress': stepProgressJson,
               if (blockFeedback.isNotEmpty) 'block_feedback': blockFeedback,
+              // Sync block timings + hint/help/assistant opens to user_progress
+              // too — the admin Postup tab reads user_progress, not user_courses
+              // (BR-BBK5FP). deepMergeProgressData passes these keys through.
+              if (blockTimestampsJson.isNotEmpty) 'block_timestamps': blockTimestampsJson,
+              if (_hintHelpTracking.isNotEmpty) 'hint_help_usage': _hintHelpTracking,
             },
           );
         }
@@ -1063,6 +1129,19 @@ class _LessonDetailPageState extends ConsumerState<LessonDetailPage> {
             }
           }
 
+          // Restore hint/help/assistant tracking so new opens ACCUMULATE across
+          // lesson re-entries instead of overwriting prior occurrences on save
+          // (BR-BBK5FP — "výskyty a časy").
+          final savedHintHelp = lessonProgress['hint_help_usage'] as Map<String, dynamic>?;
+          if (savedHintHelp != null) {
+            for (final entry in savedHintHelp.entries) {
+              final v = entry.value;
+              if (v is Map) {
+                _hintHelpTracking[entry.key] = Map<String, dynamic>.from(v);
+              }
+            }
+          }
+
           // Set opened_at for the current block if not already tracked
           if (_currentBlockIndex < _contentBlocks.length) {
             final bid = _contentBlocks[_currentBlockIndex].blockId;
@@ -1120,7 +1199,7 @@ class _LessonDetailPageState extends ConsumerState<LessonDetailPage> {
     if (!_useContentBlocks) return;
     if (index < 0 || index >= _contentBlocks.length) return;
     final block = _contentBlocks[index];
-    if (block.type != BlockType.exercise) return;
+    if (!block.type.isInteractiveBlock) return;
     if (block.isBookmarked) return;
 
     final bookmarkNotifier = ref.read(bookmarkProvider.notifier);
@@ -1133,6 +1212,24 @@ class _LessonDetailPageState extends ConsumerState<LessonDetailPage> {
       _contentBlocks[index],
       lessonId: widget.lesson.id,
     );
+  }
+
+  /// True when an atomic question block was answered incorrectly, based on the
+  /// single selected option id (multiple_choice/true_false) or typed text (open).
+  /// Multi-select questions aren't tracked via selectedOptionId → treated as not-wrong.
+  bool _atomicAnswerIsWrong(ContentBlock block) {
+    final q = block.atomicQuestion;
+    if (q == null) return false;
+    final answer = block.selectedOptionId;
+    if (answer == null || answer.isEmpty) return false;
+    if (q.isOpen) {
+      final correct = q.correctAnswer?.trim().toLowerCase() ?? '';
+      return answer.trim().toLowerCase() != correct;
+    }
+    if (q.allowMultiple) return false;
+    final correctIds = q.options.where((o) => o.isCorrect).map((o) => o.id).toList();
+    if (correctIds.isEmpty) return false;
+    return !correctIds.contains(answer);
   }
 
   void _toggleBookmark(int index) {
@@ -1394,14 +1491,14 @@ class _LessonDetailPageState extends ConsumerState<LessonDetailPage> {
     if (block?.atomicQuestion != null) {
       final q = block!.atomicQuestion!;
       final optionTexts = q.options.map((o) => '- ${o.text}').join('\n');
-      questionInfo = 'Otázka s možnostmi:\n$optionTexts';
+      questionInfo = AppStrings.chatContextQuestionWithOptions(optionTexts);
     } else if (block != null) {
       // V2 step-based questions — find evaluation steps
       for (final step in block.steps) {
         if (step.evaluationConfig != null) {
           final opts = step.evaluationConfig!.options.map((o) => '- ${o.text}').join('\n');
           if (opts.isNotEmpty) {
-            questionInfo = 'Otázka s možnostmi:\n$opts';
+            questionInfo = AppStrings.chatContextQuestionWithOptions(opts);
             break;
           }
         }
@@ -1410,17 +1507,19 @@ class _LessonDetailPageState extends ConsumerState<LessonDetailPage> {
 
     // Build a natural help request message
     final contextParts = <String>[
-      'Potřebuji pomoct s úlohou z kurzu "$courseName"${lessonName.isNotEmpty ? ', lekce "$lessonName"' : ''}.',
+      lessonName.isNotEmpty
+          ? AppStrings.chatContextHelpIntroLesson(courseName, lessonName)
+          : AppStrings.chatContextHelpIntro(courseName),
       '',
-      if (blockContent.isNotEmpty) 'Obsah úlohy: ${blockContent.length > 400 ? '${blockContent.substring(0, 400)}...' : blockContent}',
+      if (blockContent.isNotEmpty) AppStrings.chatContextHelpTaskContent(blockContent.length > 400 ? '${blockContent.substring(0, 400)}...' : blockContent),
       if (questionInfo.isNotEmpty) questionInfo,
-      if (hint.isNotEmpty) 'Nápověda říká: $hint',
-      if (help.isNotEmpty) 'Podrobnější vysvětlení: $help',
+      if (hint.isNotEmpty) AppStrings.chatContextHelpHint(hint),
+      if (help.isNotEmpty) AppStrings.chatContextHelpDetail(help),
       '',
       if (studentMessage != null && studentMessage.isNotEmpty)
-        'Můj dotaz: $studentMessage'
+        AppStrings.chatContextStudentQuery(studentMessage)
       else
-        'Můžeš mi to prosím vysvětlit jinak?',
+        AppStrings.chatContextFallbackPrompt,
     ];
     final contextMessage = contextParts.where((s) => s.isNotEmpty || contextParts.indexOf(s) == 1).join('\n');
 
@@ -1458,6 +1557,11 @@ class _LessonDetailPageState extends ConsumerState<LessonDetailPage> {
         tracking['hint_count'] = (tracking['hint_count'] as int? ?? 0) + 1;
         tracking['hint_first_ts'] ??= now;
         tracking['hint_last_ts'] = now;
+        // One entry per open so the admin postup timeline can show every
+        // occurrence + its time (BR-BBK5FP), not just first/last.
+        final hintEvents = (tracking['hint_events'] as List?)?.cast<String>() ?? <String>[];
+        hintEvents.add(now);
+        tracking['hint_events'] = hintEvents;
       },
       onSavePractice: () {
         // Actually save the bookmark for practice
@@ -1479,9 +1583,23 @@ class _LessonDetailPageState extends ConsumerState<LessonDetailPage> {
         t['help_count'] = (t['help_count'] as int? ?? 0) + 1;
         t['help_first_ts'] ??= helpNow;
         t['help_last_ts'] = helpNow;
+        final helpEvents = (t['help_events'] as List?)?.cast<String>() ?? <String>[];
+        helpEvents.add(helpNow);
+        t['help_events'] = helpEvents;
         _hintHelpTracking[block.blockId] = t;
       },
       onAskAi: () {
+        // Track assistant (Ask-AI) opens for the admin postup timeline (BR-BBK5FP).
+        final blockId = block.blockId;
+        final now = DateTime.now().toUtc().toIso8601String();
+        final t = _hintHelpTracking[blockId] ?? {};
+        t['assistant_count'] = (t['assistant_count'] as int? ?? 0) + 1;
+        t['assistant_first_ts'] ??= now;
+        t['assistant_last_ts'] = now;
+        final assistantEvents = (t['assistant_events'] as List?)?.cast<String>() ?? <String>[];
+        assistantEvents.add(now);
+        t['assistant_events'] = assistantEvents;
+        _hintHelpTracking[blockId] = t;
         _openChatWithContext(index);
       },
       onSendFeedback: (studentMessage) {
@@ -2083,8 +2201,7 @@ class _LessonDetailPageState extends ConsumerState<LessonDetailPage> {
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
-                  'Zatím nemáš žádné uložené bloky k procvičování.\n'
-                  'Přidej je pomocí záložky v lekcích.',
+                  AppStrings.courseNoBookmarks,
                   style: AppTextStyles.body(color: Colors.white),
                 ),
               ),
@@ -2107,11 +2224,12 @@ class _LessonDetailPageState extends ConsumerState<LessonDetailPage> {
       MaterialPageRoute(
         builder: (context) => QuizPage(
           questionBlocks: exerciseBlocks,
-          courseTitle: '${widget.course.title} - Cvičení',
+          courseTitle: widget.course.title,
           courseId: widget.course.id,
           progress: _exerciseProgress,
           onlyOnce: widget.course.onlyOnce,
           evaluate: true,
+          isExercise: true,
         ),
       ),
     );
@@ -2125,7 +2243,7 @@ class _LessonDetailPageState extends ConsumerState<LessonDetailPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'V tomto kurzu nejsou žádné otázky.',
+            AppStrings.courseNoQuestions,
             style: AppTextStyles.body(),
           ),
           backgroundColor: AppColors.primaryDark,
@@ -2139,7 +2257,7 @@ class _LessonDetailPageState extends ConsumerState<LessonDetailPage> {
       MaterialPageRoute(
         builder: (context) => QuizPage(
           questionBlocks: questionBlocks,
-          courseTitle: '${widget.course.title} - Kvíz',
+          courseTitle: widget.course.title,
           courseId: widget.course.id,
           progress: _kvizProgress,
           onlyOnce: widget.course.onlyOnce,

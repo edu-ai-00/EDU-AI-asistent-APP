@@ -14,12 +14,16 @@ class SkillDisplayService {
   ///
   /// [profilElo] – full 35-element student ELO profile (nullable per dim).
   /// [profilPocet] – full 35-element interaction counts.
+  /// [domainNames] – Czech domain labels keyed by domain code (from the backend
+  ///   canonical vector labeling via `GpfLabelRepository`). Falls back to the
+  ///   domain code if a label is missing — never an English constant.
   /// [minCount] – minimum interactions for a dimension to be eligible.
   /// [c] – half-width scaling constant for the confidence interval.
   /// [category] – display category label (e.g. "Matematika").
   static List<SkillDisplay> computeSkills({
     required List<double?> profilElo,
     required List<int> profilPocet,
+    Map<String, String> domainNames = const {},
     int minCount = 10,
     double c = 2.5,
     String category = 'Matematika',
@@ -27,6 +31,7 @@ class SkillDisplayService {
     final skills = <SkillDisplay>[];
 
     for (final domain in GpfStructure.domains) {
+      final domainName = domainNames[domain.code] ?? domain.code;
       final summary = ConfidenceCalculator.computeDomainSummary(
         profilElo: profilElo,
         profilPocet: profilPocet,
@@ -34,14 +39,14 @@ class SkillDisplayService {
         minCount: minCount,
         c: c,
         domainCode: domain.code,
-        domainName: domain.name,
+        domainName: domainName,
       );
 
       if (summary.meanElo == null) {
         // Not enough data — show card with message.
         skills.add(SkillDisplay(
           id: domain.code,
-          name: domain.name,
+          name: domainName,
           category: category,
           emoji: domain.emoji,
           level: 0,
@@ -55,7 +60,7 @@ class SkillDisplayService {
 
         skills.add(SkillDisplay(
           id: domain.code,
-          name: domain.name,
+          name: domainName,
           category: category,
           emoji: domain.emoji,
           level: level,

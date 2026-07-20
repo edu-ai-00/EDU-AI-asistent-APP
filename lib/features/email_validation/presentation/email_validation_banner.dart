@@ -21,35 +21,16 @@ class EmailValidationBanner extends ConsumerWidget {
       onTap: () => _handleTap(context, ref),
       child: Container(
         width: double.infinity,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         decoration: BoxDecoration(
           gradient: AppColors.bannerGradient,
         ),
-        child: SafeArea(
-          bottom: false,
-          child: Row(
-            children: [
-              Icon(
-                isGuest ? Icons.person_add_outlined : Icons.mail_outline,
-                color: Colors.white,
-                size: 20,
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  isGuest
-                      ? AppStrings.bannerGuestMessage
-                      : AppStrings.bannerVerifyMessage,
-                  style: AppTextStyles.bodySmall(color: Colors.white),
-                ),
-              ),
-              const Icon(
-                Icons.arrow_forward_ios,
-                color: Colors.white,
-                size: 16,
-              ),
-            ],
-          ),
+        child: Text(
+          isGuest
+              ? AppStrings.bannerGuestMessage
+              : AppStrings.bannerVerifyMessage,
+          style: AppTextStyles.bodySmall(color: Colors.white),
+          textAlign: TextAlign.center,
         ),
       ),
     );

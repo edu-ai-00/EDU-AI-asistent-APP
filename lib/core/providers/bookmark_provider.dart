@@ -4,7 +4,10 @@ import 'package:uuid/uuid.dart';
 import '../../models/block_model.dart';
 import '../database/app_database.dart';
 import '../sync/sync_queue.dart';
+import '../../data/repositories/practice_repository.dart';
+import '../util/silent_log.dart';
 import 'core_providers.dart';
+import 'practice_providers.dart';
 
 /// Provider for managing bookmarked blocks across the app.
 /// Bookmarks are persisted to SQLite and survive app restarts.
@@ -12,12 +15,13 @@ import 'core_providers.dart';
 final bookmarkProvider = StateNotifierProvider<BookmarkNotifier, Map<String, ContentBlock>>((ref) {
   final db = ref.watch(appDatabaseProvider);
   final syncQueue = ref.watch(syncQueueProvider);
-  return BookmarkNotifier(db, syncQueue);
+  return BookmarkNotifier(db, syncQueue, ref);
 });
 
 class BookmarkNotifier extends StateNotifier<Map<String, ContentBlock>> {
   final AppDatabase _db;
   final SyncQueue _syncQueue;
+  final Ref _ref;
   final _uuid = const Uuid();
   String? _userId;
 
@@ -26,7 +30,7 @@ class BookmarkNotifier extends StateNotifier<Map<String, ContentBlock>> {
   /// objects haven't been populated yet.
   final Set<String> _dbBookmarkKeys = {};
 
-  BookmarkNotifier(this._db, this._syncQueue) : super({});
+  BookmarkNotifier(this._db, this._syncQueue, this._ref) : super({});
 
   /// Clear all cached state. Call on logout to prevent data leaking
   /// to the next user session.
@@ -80,6 +84,25 @@ class BookmarkNotifier extends StateNotifier<Map<String, ContentBlock>> {
           'lesson_id': lessonId,
         },
       );
+
+      // Seed an FSRS practice card for this block (sourceType 'bookmark').
+      // Fire-and-forget — no-op if a card already exists, reactivates an
+      // inactive one. Covers manual bookmarks and auto-bookmark-on-wrong.
+      PracticeRepository(db: _db)
+          .createCardFromBlock(
+            userId: _userId!,
+            courseId: courseId,
+            lessonId: lessonId,
+            block: block,
+            sourceType: 'bookmark',
+          )
+          // Refresh the practice queue/count once the card is written so the
+          // homepage "Procvičování" card appears without a manual refresh.
+          .then((_) => _ref.invalidate(practiceQueueProvider))
+          .catchError((Object e, StackTrace st) {
+        silentLog('bookmark_provider:seed_card', e, st);
+        return null;
+      });
     }
   }
 

@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import '../core/strings/app_strings.dart';
 import '../core/theme/app_theme.dart';
+import '../core/providers/core_providers.dart';
 
-class CustomBottomNav extends StatelessWidget {
+class CustomBottomNav extends ConsumerWidget {
   final int selectedIndex;
   final Function(int) onItemTapped;
 
@@ -14,9 +16,10 @@ class CustomBottomNav extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final bottomPadding = MediaQuery.of(context).padding.bottom;
     final double bottomAreaHeight = bottomPadding > 0 ? bottomPadding : 16.0;
+    final unread = ref.watch(unreadNewsCountProvider);
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -43,7 +46,7 @@ class CustomBottomNav extends StatelessWidget {
                     _buildNavItem(1, 'assets/icons/chat.svg', AppStrings.navChat),
                     const SizedBox(width: 60), // Space for center button
                     _buildNavItem(3, 'assets/icons/kurzy.svg', AppStrings.navKurzy),
-                    _buildNavItem(4, 'assets/icons/novinky.svg', AppStrings.navNovinky),
+                    _buildNavItem(4, 'assets/icons/novinky.svg', AppStrings.navNovinky, badgeCount: unread),
                   ],
                 ),
               ),
@@ -85,11 +88,11 @@ class CustomBottomNav extends StatelessWidget {
     );
   }
 
-  Widget _buildNavItem(int index, String iconPath, String label) {
+  Widget _buildNavItem(int index, String iconPath, String label, {int badgeCount = 0}) {
     final isSelected = selectedIndex == index;
     final color = isSelected ? AppColors.primary : AppColors.primaryDark;
 
-    return GestureDetector(
+    final item = GestureDetector(
       onTap: () => onItemTapped(index),
       behavior: HitTestBehavior.opaque,
       child: SizedBox(
@@ -115,6 +118,38 @@ class CustomBottomNav extends StatelessWidget {
         ),
       ),
     );
-  }
 
+    if (badgeCount <= 0) return item;
+
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        item,
+        Positioned(
+          top: -2,
+          right: 8,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+            constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
+            decoration: const BoxDecoration(
+              color: Colors.red,
+              shape: BoxShape.circle,
+            ),
+            child: Center(
+              child: Text(
+                badgeCount > 99 ? '99+' : '$badgeCount',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  height: 1.0,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
 }

@@ -5,9 +5,19 @@ WORKDIR /app
 COPY . .
 
 ARG API_URL=https://app-api.edu-ai.eu
+# OAuth client config baked into the web build (dart-defines are compile-time).
+# Fed by Railway service vars of the same name. Google web also has a <meta>
+# fallback in index.html; Microsoft web REQUIRES the client id here.
+ARG GOOGLE_WEB_CLIENT_ID=
+ARG MICROSOFT_CLIENT_ID=
+ARG MICROSOFT_TENANT_ID=common
 
 RUN flutter pub get
-RUN flutter build web --release --dart-define=API_URL=${API_URL}
+RUN flutter build web --release \
+    --dart-define=API_URL=${API_URL} \
+    --dart-define=GOOGLE_WEB_CLIENT_ID=${GOOGLE_WEB_CLIENT_ID} \
+    --dart-define=MICROSOFT_CLIENT_ID=${MICROSOFT_CLIENT_ID} \
+    --dart-define=MICROSOFT_TENANT_ID=${MICROSOFT_TENANT_ID}
 
 # Cache-busting: append build timestamp to JS URLs so CDN caches are bypassed
 RUN BUILD_VER=$(date +%s) && \

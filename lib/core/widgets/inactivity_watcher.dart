@@ -34,28 +34,30 @@ class _InactivityWatcherState extends ConsumerState<InactivityWatcher>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _checkTimer = Timer.periodic(const Duration(seconds: 30), (_) => _check());
+    // 5s cadence keeps the shared-device banner countdown honest: logout fires
+    // within a few seconds of the visible timer reaching 00:00 (not up to 30s
+    // later). The check itself is a couple of cheap timestamp comparisons.
+    _checkTimer = Timer.periodic(const Duration(seconds: 5), (_) => _check());
     // Run a check next frame in case we resumed from a long sleep before
     // build wired up the lifecycle observer.
     WidgetsBinding.instance.addPostFrameCallback((_) => _check());
+    // Start work-time heartbeat tracking (BR-9SAH2R) — independent of the
+    // shared-device idle logout; runs for all authenticated users.
+    ref.read(workTimeTrackerProvider).start();
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _checkTimer?.cancel();
+    ref.read(workTimeTrackerProvider).stop();
     super.dispose();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    final session = ref.read(sessionMetaProvider);
     if (state == AppLifecycleState.resumed) {
       _check();
-    } else if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.inactive) {
-      // Snapshot last-active so post-resume diff is honest.
-      session.touchActivity();
     }
   }
 
@@ -75,6 +77,10 @@ class _InactivityWatcherState extends ConsumerState<InactivityWatcher>
   }
 
   void _onPointer(PointerEvent _) {
+    // Work-time activity is tracked for everyone.
+    ref.read(workTimeTrackerProvider).markActive();
+
+    // Idle-logout activity only matters for shared-device sessions.
     final session = ref.read(sessionMetaProvider);
     if (!session.sharedDevice) return;
     session.touchActivity();

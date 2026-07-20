@@ -7,6 +7,10 @@
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
   <meta name="description" content="EDU-AI asistent">
 
+  <!-- Google Sign-In (web): google_sign_in_web reads the OAuth client ID from
+       this tag. Public value; safe to commit. -->
+  <meta name="google-signin-client_id" content="769685421774-9jvufm5i9aisce0u972n4lkbvk9u383i.apps.googleusercontent.com">
+
   <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
@@ -20,6 +24,15 @@
 
   <title>EDU-AI asistent</title>
   <link rel="manifest" href="manifest.json">
+
+  <!-- Microsoft (aad_oauth) web support: MSAL.js + the plugin's JS interop.
+       msalv2.js defines the global `aadOauth` the Dart web plugin calls.
+       Without these, MS sign-in throws `ReferenceError: aadOauth is not defined`. -->
+  <script type="text/javascript"
+    src="https://alcdn.msauth.net/browser/2.13.1/js/msal-browser.min.js"
+    integrity="sha384-2Vr9MyareT7qv+wLp1zBt78ZWB4aljfCTMUrml3/cxm0W81ahmDOC6uyNmmn0Vrc"
+    crossorigin="anonymous"></script>
+  <script src="assets/packages/aad_oauth/assets/msalv2.js"></script>
 </head>
 <body style="background-color: #F6F2FF; margin: 0;">
   <script src="flutter_bootstrap.js" async></script>

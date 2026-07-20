@@ -4,16 +4,21 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../services/auth_token_storage.dart';
 import '../services/guest_auth_service.dart';
 import '../services/session_meta.dart';
+import '../services/work_time_tracker.dart';
 import '../../data/datasources/local/course_local_datasource.dart';
 import '../../data/datasources/local/user_progress_local_datasource.dart';
 import '../../data/datasources/local/user_stats_local_datasource.dart';
 import '../../data/datasources/remote/course_remote_datasource.dart';
+import '../../data/datasources/remote/news_remote_datasource.dart';
 import '../../data/datasources/remote/user_stats_remote_datasource.dart';
 import '../../data/datasources/local/chat_local_datasource.dart';
 import '../../data/datasources/remote/chat_remote_datasource.dart';
 import '../../data/repositories/chat_repository.dart';
 import '../../data/repositories/course_repository.dart';
 import '../../data/repositories/elo_repository.dart';
+import '../../data/repositories/gpf_label_repository.dart';
+import '../../data/repositories/news_repository.dart';
+import '../../models/news_model.dart';
 import '../../models/skill_display_model.dart';
 import '../elo/skill_display_service.dart';
 import '../network/api_endpoints.dart';
@@ -68,7 +73,111 @@ final sessionMetaProvider = Provider<SessionMeta>((ref) {
 final apiClientProvider = Provider<ApiClient>((ref) {
   final tokens = ref.watch(authTokenStorageProvider);
   final session = ref.watch(sessionMetaProvider);
-  return ApiClient(tokens, session: session, enableLogging: true);
+  final client = ApiClient(tokens, session: session, enableLogging: true);
+  // Late-bind the 401 escalation. Reading the coordinator eagerly here would
+  // create a dependency cycle (it depends on this client), so the read is
+  // deferred to call time — by then this provider is already built.
+  client.onUnauthorized = () {
+    ref.read(logoutCoordinatorProvider).forceLogoutToLogin();
+  };
+  return client;
+});
+
+/// Bumped to ask the AuthWrapper to return to the login screen (pop any pushed
+/// routes + show auth). Watched by AuthWrapper; incremented by
+/// [LogoutCoordinator] once the local session has been torn down.
+final forceAuthScreenProvider = StateProvider<int>((ref) => 0);
+
+/// Centralizes "the session is gone → go to login" so every trigger — a 401
+/// from any authenticated endpoint, a null active user, shared-device
+/// inactivity, or a manual logout — behaves identically: best-effort flush of
+/// unsynced changes while the token is still valid, then revoke + wipe all
+/// local data so nothing leaks to the next user on this (possibly shared)
+/// device, then hand off to the UI to reset to login.
+class LogoutCoordinator {
+  LogoutCoordinator(this._ref);
+
+  final Ref _ref;
+  bool _running = false;
+
+  /// Tear down the session and local data. Navigation is left to the UI layer.
+  /// Re-entrancy-guarded, so concurrent 401s collapse into a single teardown.
+  Future<void> teardown() async {
+    if (_running) return;
+    _running = true;
+    try {
+      final api = _ref.read(apiClientProvider);
+      final session = _ref.read(sessionMetaProvider);
+      final guest = _ref.read(guestAuthServiceProvider);
+      final db = _ref.read(appDatabaseProvider);
+
+      // 1. Best-effort flush of unsynced local changes while the token is still
+      //    valid. At the 15-min inactivity mark the 30-min token is usually
+      //    still alive/refreshable; a truly dead token can't be attributed
+      //    server-side, so this is best-effort and time-boxed.
+      try {
+        if (api.isAuthenticated) {
+          final sync = _ref.read(syncServiceProvider);
+          if (await sync.hasPendingChanges()) {
+            await sync.forceSync().timeout(const Duration(seconds: 8));
+          }
+        }
+      } catch (e, st) {
+        silentLog('logout_coordinator', e, st);
+      }
+
+      // 2. Best-effort server-side token revoke.
+      try {
+        if (api.isAuthenticated) await api.post(ApiEndpoints.logout);
+      } catch (e, st) {
+        silentLog('logout_coordinator', e, st);
+      }
+
+      // 3. Clear session metadata + token; force a fresh guest identity next time.
+      try {
+        await session.clear();
+      } catch (e, st) {
+        silentLog('logout_coordinator', e, st);
+      }
+      try {
+        guest.markForceNewGuest();
+      } catch (e, st) {
+        silentLog('logout_coordinator', e, st);
+      }
+      try {
+        await api.clearAuthToken();
+      } catch (e, st) {
+        silentLog('logout_coordinator', e, st);
+      }
+
+      // 4. Wipe all local data so the next user sees nothing of the previous one.
+      try {
+        await db.clearAllData();
+      } catch (e, st) {
+        silentLog('logout_coordinator', e, st);
+      }
+    } finally {
+      _running = false;
+    }
+  }
+
+  /// Tear down, then request the UI return to the login screen.
+  Future<void> forceLogoutToLogin() async {
+    await teardown();
+    _ref.read(forceAuthScreenProvider.notifier).state++;
+  }
+}
+
+/// Provider for the logout coordinator.
+final logoutCoordinatorProvider = Provider<LogoutCoordinator>((ref) {
+  return LogoutCoordinator(ref);
+});
+
+/// Provider for the active work-time tracker (BR-9SAH2R). Records heartbeats
+/// while the user is genuinely working on a learning screen.
+final workTimeTrackerProvider = Provider<WorkTimeTracker>((ref) {
+  final db = ref.watch(appDatabaseProvider);
+  return WorkTimeTracker(db);
 });
 
 /// Provider for the connectivity service.
@@ -426,6 +535,13 @@ final eloRepositoryProvider = Provider<EloRepository>((ref) {
   return EloRepository(db: db);
 });
 
+/// Provider for the GPF label repository (Czech vector dimension labels).
+final gpfLabelRepositoryProvider = Provider<GpfLabelRepository>((ref) {
+  final db = ref.watch(appDatabaseProvider);
+  final api = ref.watch(apiClientProvider);
+  return GpfLabelRepository(db, api);
+});
+
 /// Provider for computed skill cards from the user's ELO profile.
 /// Tries local DB first; if no local profile, fetches from API directly.
 /// Callers should use `ref.refresh(skillDisplayProvider)` before reading
@@ -435,6 +551,11 @@ final skillDisplayProvider = FutureProvider<List<SkillDisplay>>((ref) async {
   if (user == null) return [];
 
   final eloRepo = ref.watch(eloRepositoryProvider);
+
+  // Czech domain labels from the backend canonical vector labeling (cached in
+  // Drift, bundled-asset fallback). Kept offline-safe. See BR-N2E9MF.
+  final domainNames =
+      await ref.watch(gpfLabelRepositoryProvider).domainNames();
 
   // Try local DB first.
   var profile = await eloRepo.getProfile(user.id);
@@ -461,6 +582,7 @@ final skillDisplayProvider = FutureProvider<List<SkillDisplay>>((ref) async {
           return SkillDisplayService.computeSkills(
             profilElo: profilElo,
             profilPocet: profilPocet,
+            domainNames: domainNames,
           );
         }
       }
@@ -471,6 +593,7 @@ final skillDisplayProvider = FutureProvider<List<SkillDisplay>>((ref) async {
   return SkillDisplayService.computeSkills(
     profilElo: profile.profilElo,
     profilPocet: profile.profilPocet,
+    domainNames: domainNames,
   );
 });
 
@@ -519,3 +642,53 @@ final chatMessagesStreamProvider =
   final local = ref.watch(chatLocalDataSourceProvider);
   return local.watchMessages(sessionId);
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// News (Novinky) Providers — online-only, no local storage
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Provider for the news remote data source.
+final newsRemoteDataSourceProvider = Provider<NewsRemoteDataSource>((ref) {
+  return NewsRemoteDataSource(ref.watch(apiClientProvider));
+});
+
+/// Provider for the news repository.
+final newsRepositoryProvider = Provider<NewsRepository>((ref) {
+  return NewsRepository(ref.watch(newsRemoteDataSourceProvider));
+});
+
+/// Future provider for the news list. As a side-effect it updates the
+/// unread-count provider so the bottom-nav badge stays in sync.
+final newsListProvider = FutureProvider<List<NewsItem>>((ref) async {
+  final repository = ref.watch(newsRepositoryProvider);
+  final result = await repository.fetchList();
+  // Update unread count after the current build completes to avoid mutating
+  // another provider during this provider's build.
+  Future.microtask(
+    () => ref.read(unreadNewsCountProvider.notifier).set(result.unreadCount),
+  );
+  return result.items;
+});
+
+/// Notifier holding the unread news count for the bottom-nav badge.
+class UnreadNewsCount extends Notifier<int> {
+  @override
+  int build() => 0;
+
+  /// Set the count directly (e.g. from a list/read response).
+  void set(int count) => state = count;
+
+  /// Fetch the news list and update the count from the server.
+  Future<void> refresh() async {
+    try {
+      final result = await ref.read(newsRepositoryProvider).fetchList();
+      state = result.unreadCount;
+    } catch (e, st) {
+      silentLog('news:unread-refresh', e, st);
+    }
+  }
+}
+
+/// Provider for the unread news count.
+final unreadNewsCountProvider =
+    NotifierProvider<UnreadNewsCount, int>(UnreadNewsCount.new);

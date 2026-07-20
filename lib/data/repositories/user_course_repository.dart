@@ -154,6 +154,28 @@ class UserCourse {
 
   /// Whether the course is completed.
   bool get isCompleted => status == UserCourseStatus.completed;
+
+  /// Whether the user has any recorded progress but hasn't finished the course.
+  ///
+  /// Used by the dashboard "Pokračovat" section. It deliberately does NOT rely
+  /// on [completedLessons] alone: block/quiz-based courses never increment it
+  /// (only lesson completion does), so a genuinely-started course would
+  /// otherwise fall through both the Pokračovat and the Rychlé kvízy sections
+  /// and become invisible (BR-ZBW7TB).
+  bool get hasStarted {
+    if (isCompleted) return false;
+    if (completedLessons > 0 ||
+        currentLessonIndex > 0 ||
+        progressPercent > 0 ||
+        status == UserCourseStatus.inProgress) {
+      return true;
+    }
+    final lessons = progressData['lessons'];
+    if (lessons is Map && lessons.isNotEmpty) return true;
+    if (progressData['quiz_in_progress'] == true) return true;
+    if (progressData.containsKey('quiz_current_index')) return true;
+    return false;
+  }
 }
 
 /// Repository for user course operations.

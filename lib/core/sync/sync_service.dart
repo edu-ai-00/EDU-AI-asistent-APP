@@ -10,7 +10,10 @@ import '../network/api_client.dart';
 import '../network/api_endpoints.dart';
 import '../../data/datasources/local/chat_local_datasource.dart';
 import '../../data/datasources/remote/chat_remote_datasource.dart';
+import '../../data/repositories/gpf_label_repository.dart';
 import '../../data/repositories/chat_repository.dart';
+import '../../data/repositories/practice_repository.dart';
+import '../../models/course_model.dart';
 import 'sync_queue.dart';
 import 'sync_status.dart';
 import 'package:eduai/core/util/silent_log.dart';
@@ -119,8 +122,20 @@ class SyncService {
       // 1. Push local changes.
       await _pushChanges();
 
+      // 1b. Flush work-time heartbeats (BR-9SAH2R).
+      await _flushWorkHeartbeats();
+
       // 2. Pull remote updates.
       await _pullUpdates();
+
+      // 3. Reconcile FSRS practice cards (pull → seed → push). Runs after
+      // _pullUpdates so course content and enrollments are present locally
+      // (BR-WR4C8P).
+      await _syncPracticeCards();
+
+      // 4. Refresh cached GPF vector labels (Czech) from the backend so the
+      // skills view stays in sync with the canonical labeling (BR-N2E9MF).
+      await _refreshGpfLabels();
 
       _lastSyncTime = DateTime.now();
       _setState(SyncState.idle);
@@ -133,6 +148,226 @@ class SyncService {
     if (_syncRequestedWhileBusy) {
       _syncRequestedWhileBusy = false;
       sync();
+    }
+  }
+
+  /// Refresh the cached GPF vector dimension labels from the backend. Requires
+  /// auth; failures are swallowed so the bundled-asset / cached labels keep
+  /// serving offline (BR-N2E9MF).
+  Future<void> _refreshGpfLabels() async {
+    if (!_apiClient.isAuthenticated) return;
+    await GpfLabelRepository(_db, _apiClient).refreshFromServer();
+  }
+
+  /// Flush unsynced work-time heartbeats to the API in a single batch, then
+  /// delete the accepted rows locally. Append-only telemetry — failures just
+  /// leave rows for the next sync (BR-9SAH2R).
+  Future<void> _flushWorkHeartbeats() async {
+    if (!_apiClient.isAuthenticated) return;
+
+    final rows = await _db.getUnsyncedWorkHeartbeats();
+    if (rows.isEmpty) return;
+
+    final payload = {
+      'heartbeats': rows
+          .map((r) => {
+                'client_uuid': r.clientUuid,
+                'course_id': r.courseId,
+                if (r.lessonId != null) 'lesson_id': r.lessonId,
+                'occurred_at': r.occurredAt.toUtc().toIso8601String(),
+              })
+          .toList(),
+    };
+
+    try {
+      final result = await _apiClient.post<Map<String, dynamic>>(
+        ApiEndpoints.workHeartbeats,
+        data: payload,
+      );
+      if (result.isSuccess) {
+        await _db.deleteWorkHeartbeats(rows.map((r) => r.clientUuid).toList());
+      }
+    } catch (_) {
+      // Leave rows for the next sync cycle.
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Practice cards (FSRS) — bidirectional sync (BR-WR4C8P)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /// Reconcile FSRS practice cards with the server.
+  ///
+  /// Before this existed, practice cards were only ever created locally (on
+  /// lesson completion) and never synced — so a guest who logged into an
+  /// account kept only the cards from their guest session and never gained the
+  /// account's full set. This runs a three-step reconciliation:
+  ///   1. Pull the account's cards from the server (server wins only over
+  ///      already-synced local rows; locally-pending rows are protected).
+  ///   2. Seed cards for every default_practice block of the user's enrolled
+  ///      courses, so the full admin-configured set is present.
+  ///   3. Push all pending local cards in one bulk upsert.
+  ///
+  /// Self-contained and best-effort: any failure is logged and swallowed so it
+  /// never fails the surrounding sync.
+  Future<void> _syncPracticeCards() async {
+    if (!_apiClient.isAuthenticated) return;
+
+    final activeUser = await _db.getActiveUser();
+    if (activeUser == null) return;
+
+    try {
+      await _pullPracticeCards(activeUser.id);
+      await _seedPracticeCards(activeUser.id);
+      await _pushPracticeCards();
+    } catch (e, st) {
+      silentLog('sync:practice_cards', e, st);
+    }
+  }
+
+  DateTime? _parseIsoDate(dynamic value) {
+    if (value is! String || value.isEmpty) return null;
+    return DateTime.tryParse(value);
+  }
+
+  /// Pull the account's practice cards and upsert them locally, keyed on
+  /// (userId, blockId). Rows with pending local edits are left untouched so the
+  /// subsequent push can carry them up (last-write-wins with local protection).
+  Future<void> _pullPracticeCards(String userId) async {
+    final result = await _apiClient.get<Map<String, dynamic>>(
+      ApiEndpoints.userPracticeCards,
+    );
+    if (result.isFailure || result.data == null) return;
+
+    final list = result.data!['data'] as List<dynamic>? ?? [];
+    for (final json in list) {
+      final remote = json as Map<String, dynamic>;
+      final blockId = remote['block_id'] as String? ?? '';
+      if (blockId.isEmpty) continue;
+
+      final existing = await _db.getPracticeCardByBlock(userId, blockId);
+      // Protect locally-pending edits — they're pushed in _pushPracticeCards.
+      if (existing != null &&
+          SyncStatusExtension.fromInt(existing.syncStatus) ==
+              SyncStatus.pending) {
+        continue;
+      }
+
+      await _db.upsertPracticeCard(PracticeCardsTableCompanion(
+        id: Value(existing?.id ?? _generateLocalId()),
+        serverId: Value(remote['id']?.toString()),
+        userId: Value(userId),
+        courseId: Value(remote['course_id'] as String? ?? ''),
+        lessonId: Value(remote['lesson_id'] as String? ?? ''),
+        blockId: Value(blockId),
+        sourceType: Value(remote['source_type'] as String? ?? 'lesson'),
+        state: Value((remote['state'] as num?)?.toInt() ?? 0),
+        dueDate:
+            Value(_parseIsoDate(remote['due_date']) ?? DateTime.now().toUtc()),
+        stability: Value((remote['stability'] as num?)?.toDouble() ?? 0.0),
+        difficulty: Value((remote['difficulty'] as num?)?.toDouble() ?? 0.0),
+        reps: Value((remote['reps'] as num?)?.toInt() ?? 0),
+        lapses: Value((remote['lapses'] as num?)?.toInt() ?? 0),
+        scheduledDays: Value((remote['scheduled_days'] as num?)?.toInt() ?? 0),
+        elapsedDays: Value((remote['elapsed_days'] as num?)?.toInt() ?? 0),
+        lastReview: Value(_parseIsoDate(remote['last_review'])),
+        weight: Value((remote['weight'] as num?)?.toDouble() ?? 5.0),
+        avgTimeSec: Value((remote['avg_time_sec'] as num?)?.toInt() ?? 20),
+        skipCondition: Value(remote['skip_condition'] as String?),
+        isActive: Value(remote['is_active'] as bool? ?? true),
+        syncStatus: const Value(0),
+        createdAt: Value(_parseIsoDate(remote['created_at']) ?? DateTime.now()),
+        updatedAt: Value(_parseIsoDate(remote['updated_at']) ?? DateTime.now()),
+      ));
+    }
+  }
+
+  /// Seed cards for every default_practice block of the user's enrolled
+  /// courses whose content is available locally. New cards are marked pending
+  /// and pushed by [_pushPracticeCards] in the same cycle.
+  Future<void> _seedPracticeCards(String userId) async {
+    final enrollments = await _db.getUserCourses(userId);
+    if (enrollments.isEmpty) return;
+
+    final repo = PracticeRepository(db: _db);
+    final seededLocalIds = <String>{};
+    for (final enrollment in enrollments) {
+      // A user course's courseId may be the local id or the field course_id.
+      final row = await _db.getCourseById(enrollment.courseId) ??
+          await _db.getCourseByFieldCourseId(enrollment.courseId);
+      if (row == null) continue;
+      if (!seededLocalIds.add(row.id)) continue;
+      try {
+        final data = jsonDecode(row.data) as Map<String, dynamic>;
+        final course = Course.fromJsonData(id: row.id, data: data);
+        await repo.seedCardsFromCourse(userId: userId, course: course);
+      } catch (e, st) {
+        silentLog('sync:seed_practice_cards', e, st);
+      }
+    }
+  }
+
+  /// Push all pending local practice cards to the server in one bulk upsert,
+  /// then mark the pushed rows synced. Cards missing any server-required
+  /// identifier are skipped (they can't be represented server-side and would
+  /// otherwise 422 the whole batch).
+  Future<void> _pushPracticeCards() async {
+    final pending = await _db.getPendingSyncPracticeCards();
+    if (pending.isEmpty) return;
+
+    final pushable = pending
+        .where((c) =>
+            c.courseId.isNotEmpty &&
+            c.lessonId.isNotEmpty &&
+            c.blockId.isNotEmpty)
+        .toList();
+    if (pushable.isEmpty) return;
+
+    final cards = pushable
+        .map((c) => {
+              'course_id': c.courseId,
+              'lesson_id': c.lessonId,
+              'block_id': c.blockId,
+              'source_type': c.sourceType,
+              'state': c.state,
+              'due_date': c.dueDate.toUtc().toIso8601String(),
+              'stability': c.stability,
+              'difficulty': c.difficulty,
+              'reps': c.reps,
+              'lapses': c.lapses,
+              'scheduled_days': c.scheduledDays,
+              'elapsed_days': c.elapsedDays,
+              if (c.lastReview != null)
+                'last_review': c.lastReview!.toUtc().toIso8601String(),
+              'weight': c.weight,
+              'avg_time_sec': c.avgTimeSec,
+              if (c.skipCondition != null) 'skip_condition': c.skipCondition,
+              'is_active': c.isActive,
+            })
+        .toList();
+
+    final result = await _apiClient.post<Map<String, dynamic>>(
+      ApiEndpoints.userPracticeCards,
+      data: {'cards': cards},
+    );
+    if (result.isFailure || result.data == null) return;
+
+    // Map server ids back by block_id so we can record them locally.
+    final serverIdByBlock = <String, String>{};
+    for (final r in (result.data!['data'] as List<dynamic>? ?? [])) {
+      final m = r as Map<String, dynamic>;
+      final bid = m['block_id'] as String?;
+      if (bid != null && m['id'] != null) {
+        serverIdByBlock[bid] = m['id'].toString();
+      }
+    }
+
+    for (final c in pushable) {
+      await _db.markPracticeCardSynced(
+        c.id,
+        c.updatedAt,
+        serverId: serverIdByBlock[c.blockId],
+      );
     }
   }
 
@@ -854,11 +1089,20 @@ class SyncService {
       }
 
       // Find existing local user course — first by server ID, then by
-      // userId+courseId (handles code-entry records that don't have serverId yet).
+      // userId+courseId (handles code-entry records that don't have serverId yet),
+      // then by course identity across sibling course rows. The last fallback
+      // fixes BR-MFZF5R: after a course update the enrollment can be pinned to a
+      // twin `courses` row, so a plain (userId, resolvedRow.id) lookup misses and
+      // a duplicate enrollment would otherwise be minted below.
       var existingLocal = await _db.getUserCourseByServerId(serverId);
       existingLocal ??= await _db.getUserCourseByUserAndCourse(
         activeUser.id,
         localCourse.id,
+      );
+      existingLocal ??= await _db.findUserCourseByCourseIdentity(
+        activeUser.id,
+        serverId: courseNumericId ?? localCourse.serverId,
+        courseId: courseStringId ?? localCourse.courseId,
       );
 
       // Skip records with pending local changes.
@@ -966,6 +1210,12 @@ class SyncService {
         ),
       );
     }
+
+    // Safety net (BR-MFZF5R): collapse any twin course rows and duplicate
+    // enrollments left behind by earlier syncs so the library shows one card
+    // per course. Progress is preserved — the richest copy wins.
+    await _db.deduplicateCourses();
+    await _db.deduplicateUserCourses(activeUser.id);
   }
 
   /// Pull user stats updates from the server.

@@ -67,6 +67,11 @@ class _ProfileSetupPageState extends ConsumerState<ProfileSetupPage> {
       final db = ref.read(appDatabaseProvider);
       final userId = const Uuid().v4();
 
+      // Capture the currently-active user (typically the guest) BEFORE it is
+      // deactivated by createAndActivateUser, so its local data can be migrated
+      // onto the new record below.
+      final oldUser = await db.getActiveUser();
+
       // Convert selected subjects to JSON string
       final subjectsJson = jsonEncode(_selectedSubjects.toList());
 
@@ -82,6 +87,15 @@ class _ProfileSetupPageState extends ConsumerState<ProfileSetupPage> {
           syncStatus: const Value(1), // pending sync
         ),
       );
+
+      // Migrate local data (course enrollments in progress, progress, stats,
+      // bookmarks, ...) from the previous guest user to the new full-profile
+      // record. Without this the guest's rows stay keyed to the old guest UUID
+      // and disappear from the course list after the upgrade (BR-4FTCFH).
+      // Mirrors _saveExistingUserToDatabase in email_validation_providers.dart.
+      if (oldUser != null && oldUser.id != userId) {
+        await db.migrateUserData(oldUser.id, userId);
+      }
 
       // Sync user with server (register/login on backend)
       final syncSuccess = await ref

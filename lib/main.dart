@@ -1,9 +1,12 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_web_plugins/url_strategy.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'app.dart';
 import 'core/providers/core_providers.dart';
 import 'core/services/auth_token_storage.dart';
+import 'core/strings/locale_manager.dart';
 import 'core/theme/app_theme.dart';
 import 'core/util/silent_log.dart';
 
@@ -53,6 +56,11 @@ void main() async {
   // Ensure Flutter bindings are initialized before using plugins.
   WidgetsFlutterBinding.ensureInitialized();
 
+  // Web: use clean URLs (no #/ hash) so /terms, /privacy etc. work as deep links.
+  if (kIsWeb) {
+    usePathUrlStrategy();
+  }
+
   // Initialize SharedPreferences.
   final sharedPreferences = await SharedPreferences.getInstance();
 
@@ -62,6 +70,9 @@ void main() async {
 
   // Restore previously selected theme.
   await _restoreSavedTheme();
+
+  // Restore previously selected locale (defaults to Czech).
+  await LocaleManager.restore();
 
   runApp(
     ProviderScope(
