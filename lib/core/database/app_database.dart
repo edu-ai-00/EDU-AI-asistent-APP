@@ -610,6 +610,15 @@ class AppDatabase extends _$AppDatabase {
     return (delete(syncQueueTable)..where((s) => s.id.equals(id))).go();
   }
 
+  /// Remove a sync queue entry only while it still holds [payload] — the
+  /// payload that was actually sent. Returns the number of rows removed: 0
+  /// means a newer change was merged into the entry meanwhile (BR-MKFPU6).
+  Future<int> removeSyncQueueEntryIfPayload(int id, String payload) {
+    return (delete(syncQueueTable)
+          ..where((s) => s.id.equals(id) & s.payload.equals(payload)))
+        .go();
+  }
+
   /// Get count of pending operations (only those ready to process).
   Future<int> getPendingSyncCount() async {
     final count = countAll();

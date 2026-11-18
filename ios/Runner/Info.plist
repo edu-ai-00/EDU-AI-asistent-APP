@@ -45,6 +45,8 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>GIDClientID</key>
 	<string>769685421774-0ber0gudf10h00hk450sdchmbk0o3pin.apps.googleusercontent.com</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>LSApplicationQueriesSchemes</key>
 	<array>
 		<string>msauthv2</string>
@@ -61,6 +63,10 @@
 	<string>Abys mohl vyfotit své řešení a přiložit ho k odpovědi.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Abys mohl přiložit k odpovědi fotku svého řešení z galerie.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

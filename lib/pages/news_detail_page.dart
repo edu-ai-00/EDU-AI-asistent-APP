@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/strings/app_strings.dart';
 import '../core/theme/app_theme.dart';
 import '../core/providers/core_providers.dart';
+import '../core/providers/notification_providers.dart';
 import '../core/util/silent_log.dart';
 import '../models/news_model.dart';
 import '../widgets/markdown_media_widget.dart';
@@ -38,7 +41,7 @@ class _NewsDetailPageState extends ConsumerState<NewsDetailPage> {
   Future<NewsItem> _loadDetail() async {
     final repository = ref.read(newsRepositoryProvider);
     final item = await repository.fetchDetail(widget.id);
-    // Mark as read once, update the unread badge and refresh the list so the
+    // Mark as read once, update the unread badge and the feed row so the
     // read state is reflected when the user returns.
     _markRead();
     return item;
@@ -46,10 +49,12 @@ class _NewsDetailPageState extends ConsumerState<NewsDetailPage> {
 
   Future<void> _markRead() async {
     try {
-      final newCount = await ref.read(newsRepositoryProvider).markRead(widget.id);
+      await ref.read(newsRepositoryProvider).markRead(widget.id);
       if (!mounted) return;
-      ref.read(unreadNewsCountProvider.notifier).set(newCount);
-      ref.invalidate(newsListProvider);
+      markFeedItemsReadLocally(ref, (item) => item.newsId == widget.id);
+      // The badge counts notifications too, which the news endpoint's own
+      // count leaves out — ask for the combined figure.
+      unawaited(ref.read(unreadNewsCountProvider.notifier).refresh());
     } catch (e, st) {
       silentLog('news:mark-read', e, st);
     }

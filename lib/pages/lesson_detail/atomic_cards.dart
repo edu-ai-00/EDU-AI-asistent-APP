@@ -9,6 +9,7 @@ import '../../models/course_model.dart';
 import '../../models/open_answer_feedback.dart';
 import '../../widgets/answer_photo_picker.dart';
 import '../../widgets/lesson_image.dart';
+import '../../widgets/lesson_text_style.dart';
 import '../../widgets/markdown_latex_widget.dart';
 import '../../widgets/open_answer_feedback_card.dart';
 import 'card_container.dart';
@@ -48,40 +49,10 @@ class LessonAtomicDisplayCard extends StatelessWidget {
           Html(
             data: resolveHtmlImageUrls(content),
             extensions: lessonHtmlImageExtensions(),
-            style: {
-              'body': Style(
-                margin: Margins.zero,
-                padding: HtmlPaddings.zero,
-                fontSize: FontSize(15),
-                fontWeight: FontWeight.w500,
-                color: AppColors.primaryDark88,
-                lineHeight: const LineHeight(1.5),
-                fontFamily: 'Poppins',
-              ),
-              'p': Style(margin: Margins.only(bottom: 12)),
-              'h3': Style(
-                fontSize: FontSize(18),
-                fontWeight: FontWeight.w700,
-                color: AppColors.primaryDark,
-                margin: Margins.only(bottom: 12, top: 8),
-              ),
-              'strong': Style(
-                fontWeight: FontWeight.w700,
-                color: AppColors.primaryDark,
-              ),
-              'em': Style(fontStyle: FontStyle.italic),
-              'ul': Style(margin: Margins.only(bottom: 12)),
-              'li': Style(margin: Margins.only(bottom: 6)),
-            },
+            style: lessonHtmlStyle(),
           )
         else
-          Text(
-            content,
-            style: AppTextStyles.body(
-              color: AppColors.primaryDark.withValues(alpha: 0.72),
-              height: 1.5,
-            ),
-          ),
+          Text(content, style: lessonBodyStyle(AppColors.primaryDark)),
         if (block.hasVideo) ...[
           const SizedBox(height: 16),
           AppVideoEmbed(videoUrl: block.videoUrl!),
@@ -136,20 +107,10 @@ class LessonAtomicQuestionCard extends StatelessWidget {
           Html(
             data: resolveHtmlImageUrls(content),
             extensions: lessonHtmlImageExtensions(),
-            style: {
-              'body': Style(
-                margin: Margins.zero,
-                padding: HtmlPaddings.zero,
-                fontSize: FontSize(16),
-                fontWeight: FontWeight.w600,
-                color: AppColors.primaryDark,
-                lineHeight: const LineHeight(1.4),
-                fontFamily: 'Poppins',
-              ),
-            },
+            style: lessonHtmlStyle(),
           )
         else
-          Text(content, style: AppTextStyles.buttonLarge()),
+          Text(content, style: lessonBodyStyle(AppColors.primaryDark)),
         const SizedBox(height: 16),
         if (openInput != null)
           openInput!
@@ -232,8 +193,7 @@ class LessonAtomicQuestionCard extends StatelessWidget {
                   else
                     Text(
                       question!.solution!,
-                      style: AppTextStyles.bodySmall(
-                          color: AppColors.primaryDark80),
+                      style: lessonBodyStyle(AppColors.primaryDark80),
                     ),
                 ],
               ),
@@ -426,14 +386,33 @@ class LessonAtomicOpenQuestionInput extends StatelessWidget {
                   borderRadius: AppDecorations.radiusS,
                 ),
               ),
+              // A bare spinner left the student guessing through a three- to
+              // five-second grading call, which on a monitor reads as a frozen
+              // page (BR-J8DEXT). The button is full width here, so it says
+              // what the quiz's bottom bar says (BR-4AT4CC).
               child: isEvaluating
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                      ),
+                  ? Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor:
+                                AlwaysStoppedAnimation<Color>(Colors.white),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Flexible(
+                          child: Text(
+                            AppStrings.openFeedbackEvaluating,
+                            textAlign: TextAlign.center,
+                            overflow: TextOverflow.ellipsis,
+                            style: AppTextStyles.buttonLarge(),
+                          ),
+                        ),
+                      ],
                     )
                   : Text(
                       AppStrings.lessonCheckAnswer,
@@ -579,8 +558,7 @@ class LessonAtomicOpenQuestionInput extends StatelessWidget {
                   else
                     Text(
                       question.solution!,
-                      style: AppTextStyles.meta(
-                          color: AppColors.primaryDark80),
+                      style: lessonBodyStyle(AppColors.primaryDark80),
                     ),
                 ],
               ),

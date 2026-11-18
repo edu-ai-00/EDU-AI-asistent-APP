@@ -29,10 +29,12 @@ class DashboardTiers {
   /// Above this the Knihovna banner advertises the mini-game reward.
   static const int promoReward = 70;
 
-  /// Above this the trophy half-tile becomes the shop, and the entrance-exam
-  /// banner points at the Cermatík chat instead of the intro course.
+  /// Above this the trophy half-tile becomes the shop.
+  ///
+  /// The entrance-exam banner used to switch to the Cermatík chat on this
+  /// same rung; since BR-SAWX2U that banner and its threshold are admin-
+  /// managed rows, so the tier no longer carries it.
   static const int shopInsteadOfTrophies = 100;
-  static const int cermatikInsteadOfJpz = 100;
 
   /// Subtitle under "Ahoj, {jméno}! 👋".
   static String greetingSubtitle(int xp) {
@@ -58,8 +60,4 @@ class DashboardTiers {
   /// The second half-tile: trophies for newcomers, the avatar shop later —
   /// trophies stay reachable by tapping the streak tile or the XP badge.
   static bool showsShop(int xp) => xp > shopInsteadOfTrophies;
-
-  /// The entrance-exam banner: intro course first, Cermatík once the learner
-  /// is invested enough for a conversation to beat a course.
-  static bool showsCermatik(int xp) => xp > cermatikInsteadOfJpz;
 }

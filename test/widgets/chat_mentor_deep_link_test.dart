@@ -73,10 +73,10 @@ class _FakeChatRepo implements ChatRepository {
   }
 
   @override
-  Future<ChatSessionsTableData> resumeOrCreateSession(
+  Future<ChatSessionsTableData?> findSessionToResume(
       String userId, String personaSlug) async {
     resumedFor.add(personaSlug);
-    return existing ?? await createSession(userId, personaSlug);
+    return existing;
   }
 
   @override
@@ -162,13 +162,14 @@ void main() {
     final (repo, container) = await _pumpWithPendingSlug(tester, 'skolnik');
 
     expect(repo.resumedFor, ['skolnik']);
-    expect(repo.createdFor, ['skolnik'],
-        reason: 'nothing to resume on a first visit');
+    // Nothing to resume on a first visit, and nothing created either: the
+    // first message creates the session (BR-ESXSZY).
+    expect(repo.createdFor, isEmpty);
     expect(find.byType(ChatDetailPage), findsOneWidget);
-    expect(
-      tester.widget<ChatDetailPage>(find.byType(ChatDetailPage)).persona,
-      ChatPersona.skolnik,
-    );
+    final page = tester.widget<ChatDetailPage>(find.byType(ChatDetailPage));
+    expect(page.persona, ChatPersona.skolnik);
+    expect(page.sessionId, isEmpty);
+    expect(page.mentorSlug, 'skolnik');
     // Consumed, so a rebuild does not start the conversation a second time.
     expect(container.read(pendingChatMentorSlugProvider), isNull);
   });
@@ -180,6 +181,11 @@ void main() {
     final (repo, _) = await _pumpWithPendingSlug(tester, 'dejepisec');
 
     expect(repo.resumedFor, ['dejepisec']);
+    // ChatPersona has no `dejepisec`, so the slug is what creates the session.
+    expect(
+      tester.widget<ChatDetailPage>(find.byType(ChatDetailPage)).mentorSlug,
+      'dejepisec',
+    );
   });
 
   testWidgets('falls back to the built-ins when the server list is empty',

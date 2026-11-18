@@ -6,8 +6,8 @@ import 'package:eduai/pages/lesson_detail_page.dart';
 /// BR-KFHPAR — the "Zeptat se AI" context was assembled verbatim from Block V2
 /// markdown, so a step's image embed (`![náměstí](https://pub-….r2.dev/…)`) put
 /// a raw URL into the student's message bubble and into the prompt. The model
-/// cannot open links, and ~90 characters of URL ate into the 400-character
-/// task-content budget that the assignment itself needs.
+/// cannot open links, and ~90 characters of URL ate into the task-content
+/// budget that the assignment itself needs.
 void main() {
   group('sanitizeAiContext', () {
     test('markdown image collapses to its alt text', () {

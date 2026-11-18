@@ -96,6 +96,21 @@ void main() {
       expect(block.hasHintForStep('s1'), isFalse);
     });
 
+    test('a step carrying only help still has something to open', () {
+      // BR-3FE9U7: the "?" was gated on the hint alone, so an author who
+      // filled in only the second stage left the help unreachable.
+      final block = _displayBlock(
+        blockHint: null,
+        blockHelp: null,
+        stepHint: null,
+        stepHelp: 'Rovnice mají dvě části, které nevypadají, ale jsou stejné.',
+      );
+
+      expect(block.hasHintForStep('s2'), isFalse);
+      expect(block.hasHintOrHelpForStep('s2'), isTrue);
+      expect(block.hasHintOrHelpForStep('s1'), isFalse);
+    });
+
     test('an unknown step id and an atomic block fall back to the block', () {
       final block = _displayBlock();
       expect(block.hintForStep('s99'), 'Společná nápověda bloku.');
@@ -166,7 +181,36 @@ void main() {
       expect(reported, 's2');
     });
 
-    testWidgets('offers no "?" when neither the step nor the block has a hint',
+    testWidgets('shows a "?" on a step whose only text is help',
+        (tester) async {
+      // BR-3FE9U7, the reported block: step help, no hint anywhere.
+      String? reported;
+      final block = _displayBlock(
+        blockHint: null,
+        blockHelp: null,
+        stepHint: null,
+        stepHelp: 'Rovnice mají dvě části, které nevypadají, ale jsou stejné.',
+      );
+
+      await tester.pumpWidget(_wrap(
+        block,
+        currentStepIndex: 1,
+        onHintRequested: (stepId) => reported = stepId,
+      ));
+      await tester.pumpAndSettle();
+
+      // Only s2's card offers it; s1 still has nothing to show.
+      final hintButtons = find.byIcon(Icons.help_outline);
+      expect(hintButtons, findsOneWidget);
+
+      await tester.tap(hintButtons);
+      await tester.pumpAndSettle();
+
+      expect(reported, 's2');
+    });
+
+    testWidgets(
+        'offers no "?" when neither the step nor the block has hint or help',
         (tester) async {
       final block = _displayBlock(
         blockHint: null,

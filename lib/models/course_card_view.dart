@@ -21,7 +21,17 @@ class CourseCardView {
   final String? description;
   final String? badge;
   final int lessonCount;
+
+  /// Rough course length in whole hours. Only a fallback now — the cards print
+  /// [durationMinutes] whenever a real duration is known.
   final int durationHours;
+
+  /// Course length in minutes, summed from the block durations exactly as the
+  /// course-detail header does it, or 0 when the payload has not arrived yet.
+  /// The cards used to show a flat 20 min per lesson rounded up to hours, so
+  /// the same course read "2 hod" on the card and "25 min" in the detail
+  /// (BR-JS4P3H).
+  final int durationMinutes;
   final CourseStatus status;
   final int currentProgress;
   final int totalProgress;
@@ -39,6 +49,7 @@ class CourseCardView {
     required this.badge,
     required this.lessonCount,
     required this.durationHours,
+    required this.durationMinutes,
     required this.status,
     required this.currentProgress,
     required this.totalProgress,
@@ -53,20 +64,25 @@ class CourseCardView {
     // Estimate duration (about 20 minutes per lesson)
     final durationHours = (lessonCount * 20 / 60).ceil();
 
+    // The real length, summed the same way as the course detail header, so the
+    // two screens agree (BR-JS4P3H). A row whose payload has not been
+    // downloaded has no blocks and would sum to a bogus estimate, so it keeps
+    // the catalog's authored minutes — and with neither, the card falls back to
+    // durationHours. Matches knihovna_page.
+    final hasFullContent =
+        (courseData['blocks'] as List<dynamic>?)?.isNotEmpty ?? false;
+    final durationMinutes = hasFullContent
+        ? Course.totalCourseMinutes(courseData)
+        : (courseData['estimated_minutes'] as int? ?? 0);
+
     // Block-level progress, matching course_detail_page.
     var totalBlocks = 0;
-    var completedBlocks = 0;
     for (final l in lessons ?? const []) {
       final lesson = l as Map<String, dynamic>;
       totalBlocks += (lesson['blocks'] as List<dynamic>?)?.length ?? 0;
     }
-    final lessonsProgress =
-        userCourse.progressData['lessons'] as Map<String, dynamic>?;
-    for (final entry in lessonsProgress?.values ?? const []) {
-      final lessonData = entry as Map<String, dynamic>?;
-      completedBlocks +=
-          (lessonData?['completed_blocks'] as List<dynamic>?)?.length ?? 0;
-    }
+    final completedBlocks =
+        Course.completedBlockCount(courseData, userCourse.progressData);
 
     // Quiz-only detection and effective status/progress
     final isQuizOnly = courseData['only_quiz'] == true;
@@ -98,6 +114,7 @@ class CourseCardView {
       badge: courseData['badge'] as String?,
       lessonCount: lessonCount,
       durationHours: durationHours,
+      durationMinutes: durationMinutes,
       status: status,
       // For quiz-only courses, show 1/1 when completed
       currentProgress: isQuizOnly ? (quizCompleted ? 1 : 0) : completedBlocks,
@@ -107,6 +124,11 @@ class CourseCardView {
     );
   }
 
+  /// What a card prints next to the clock: the summed length when it is known,
+  /// the hour estimate while the payload is still missing.
+  String get durationLabel => durationMinutes > 0
+      ? AppStrings.durationSmart(durationMinutes)
+      : AppStrings.durationHours(durationHours);
 }
 
 /// The course title, or null when only a placeholder is known locally.

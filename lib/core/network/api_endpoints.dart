@@ -4,6 +4,7 @@ class ApiEndpoints {
 
   /// Base URL for the API.
   /// Override at build time: flutter build web --dart-define=API_URL=https://app-api-stage.edu-ai.eu
+  /// Store builds get it from their channel (dart_defines.sh).
   static const String baseUrl = String.fromEnvironment(
     'API_URL',
     defaultValue: 'https://app-api.edu-ai.eu',
@@ -320,6 +321,46 @@ class ApiEndpoints {
 
   /// POST - Mark a news item as read (returns updated unread_count).
   static String newsRead(int id) => '/api/news/$id/read';
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Notifications (NOTIF-3/4/6) — see
+  // docs/superpowers/specs/2026-10-07-notification-system-design.md §5.1
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /// GET - News + this user's notifications, newest first.
+  /// Query: `?before=ISO8601&before_id=ID&limit=20` (cursor from meta)
+  /// Returns: { data: [...], meta: { unread_count, next_before, next_before_id?, has_more } }
+  static const String feed = '/api/feed';
+
+  /// GET - { data: { unread_count } } (news + notifications).
+  static const String notificationsUnreadCount =
+      '/api/notifications/unread-count';
+
+  /// GET - Admin-managed dashboard banners this user qualifies for, in render
+  /// order. Each row carries its XP band for the app to evaluate locally.
+  /// Returns: { data: [{ id, badge, title, body, accent, illustration, link,
+  /// min_xp, max_xp }] }
+  static const String dashboardBanners = '/api/dashboard/banners';
+
+  /// POST - Mark one notification read. Returns { data: { unread_count } }.
+  static String notificationRead(String notificationId) =>
+      '/api/notifications/${Uri.encodeComponent(notificationId)}/read';
+
+  /// POST - Mark all notifications and news read. Returns { data: { unread_count } }.
+  static const String notificationsReadAll = '/api/notifications/read-all';
+
+  /// POST - Batch of app-side events (≤ 200), idempotent.
+  /// Body: { events: [ { notification_id, event, occurred_at } ] }
+  /// Returns: { data: { accepted, unread_count } }
+  static const String notificationEvents = '/api/notifications/events';
+
+  /// GET / PUT - Push switch, quiet hours, learning reminder, timezone.
+  static const String notificationPreferences =
+      '/api/notification-preferences';
+
+  /// POST - Register a push token { token, platform, app_version? }.
+  /// DELETE - Forget it { token }.
+  static const String pushDevices = '/api/push-devices';
 
   // ═══════════════════════════════════════════════════════════════════════════
   // Parental consent (minors) — BR-8FDF37

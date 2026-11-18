@@ -10,10 +10,21 @@ class ChatLocalDataSource {
 
   // === Watch (reactive streams) ===
 
-  /// Watch all sessions for a user, ordered by most recent.
+  /// Watch the user's conversations, ordered by most recent.
+  ///
+  /// A session with no messages is not a conversation: the app used to open
+  /// one the moment a mentor was picked, so a student who backed out without
+  /// typing kept an empty chat in the history (BR-ESXSZY). Sessions are now
+  /// created by the first message, but the rows earlier builds left behind —
+  /// here and on the server, which hands them to every device on the next
+  /// pull — stay out of the list too. The admin hides them the same way
+  /// (BR-MWEUHX).
   Stream<List<ChatSessionsTableData>> watchSessions(String userId) {
     return (_db.select(_db.chatSessionsTable)
-          ..where((s) => s.userId.equals(userId))
+          ..where((s) =>
+              s.userId.equals(userId) &
+              existsQuery(_db.select(_db.chatMessagesTable)
+                ..where((m) => m.sessionId.equalsExp(s.id))))
           ..orderBy([(s) => OrderingTerm.desc(s.lastMessageAt)]))
         .watch();
   }

@@ -14,6 +14,7 @@ import 'package:eduai/models/avatar_display.dart';
 import 'package:eduai/models/avatar_model.dart';
 import 'package:eduai/pages/shop_page.dart';
 import 'package:eduai/widgets/desktop_top_bar.dart';
+import 'package:eduai/widgets/filter_chip_row.dart';
 import 'package:eduai/widgets/shop_item_card.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -61,17 +62,40 @@ final _catalog = <AvatarItem>[
 /// recorded and applied in memory, so what is under test is the screen's own
 /// logic rather than the network.
 class FakeAvatarController extends AvatarController {
+  final List<AvatarItem> catalog;
   final List<String> purchased = [];
   final List<String> equipped = [];
 
   /// When true, [purchase] behaves like a device with no connection.
   bool failPurchase = false;
 
+  /// True when the catalog came from the device because the server could not
+  /// be reached.
+  final bool fromCache;
+
+  /// How many times the screen has asked for the avatar — a retry rebuilds.
+  int builds = 0;
+
+  FakeAvatarController({List<AvatarItem>? catalog, this.fromCache = false})
+      : catalog = catalog ?? _catalog;
+
   @override
-  Future<AvatarState> build() async => AvatarState(
-        catalog: _catalog,
-        equipped: {AvatarSlot.torso: 'torso_base'},
-      );
+  Future<AvatarState> build() async {
+    builds++;
+    return AvatarState(
+      catalog: catalog,
+      equipped: {AvatarSlot.torso: 'torso_base'},
+      fromCache: fromCache,
+    );
+  }
+
+  /// A catalog refresh that brought new items in.
+  void addItems(List<AvatarItem> items) {
+    final current = state.value!;
+    state = AsyncValue.data(
+      current.copyWith(catalog: [...current.catalog, ...items]),
+    );
+  }
 
   @override
   Future<void> purchase(AvatarItem item) async {
@@ -109,6 +133,8 @@ class FakeAvatarController extends AvatarController {
 Future<FakeAvatarController> _pumpShop(
   WidgetTester tester, {
   Size size = const Size(360, 800),
+  List<AvatarItem>? catalog,
+  bool fromCache = false,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1.0;
@@ -129,7 +155,10 @@ Future<FakeAvatarController> _pumpShop(
   SharedPreferences.setMockInitialValues({});
   final prefs = await SharedPreferences.getInstance();
 
-  final controller = FakeAvatarController();
+  final controller = FakeAvatarController(
+    catalog: catalog,
+    fromCache: fromCache,
+  );
 
   await tester.pumpWidget(
     ProviderScope(
@@ -210,6 +239,125 @@ void main() {
 
     expect(_cardsForSlot(tester, AvatarSlot.legs), 1);
     expect(_cardsForSlot(tester, AvatarSlot.head), 0);
+  });
+
+  // BR-K6C4ST: Oči, Pusa and Trup each held nothing but the default piece —
+  // always worn, never removable — so their tabs offered nothing to change or
+  // acquire. Prod had no eyes or mouth at all, which left a tab that only
+  // said "nothing here yet".
+  group('which slots get a tab', () {
+    Finder tab(String label) => find.descendant(
+          of: find.byType(FilterChipRow),
+          matching: find.text(label),
+        );
+
+    testWidgets('a slot holding only its default item gets none',
+        (tester) async {
+      await _pumpShop(tester);
+      expect(tab(AppStrings.shopSlotTorso), findsNothing);
+    });
+
+    testWidgets('an empty slot gets none', (tester) async {
+      await _pumpShop(tester);
+      expect(tab(AppStrings.shopSlotEyes), findsNothing);
+      expect(tab(AppStrings.shopSlotMouth), findsNothing);
+    });
+
+    testWidgets('a lone item that can still be acquired keeps its tab',
+        (tester) async {
+      // Acquiring it, and taking it off again, is a choice — hiding the tab
+      // would leave the item unreachable.
+      await _pumpShop(tester);
+      expect(tab(AppStrings.shopSlotHead), findsOneWidget);
+      expect(tab(AppStrings.shopSlotLegs), findsOneWidget);
+    });
+
+    testWidgets('a slot gets its tab once a second item lands',
+        (tester) async {
+      final controller = await _pumpShop(tester);
+
+      controller.addItems([_item('torso_stripes', AvatarSlot.torso, 20)]);
+      await tester.pumpAndSettle();
+
+      expect(tab(AppStrings.shopSlotTorso), findsOneWidget);
+    });
+
+    testWidgets('the chosen tab stays chosen when a tab appears before it',
+        (tester) async {
+      final controller = await _pumpShop(tester);
+
+      final legsTab = tab(AppStrings.shopSlotLegs);
+      await tester.ensureVisible(legsTab);
+      await tester.pumpAndSettle();
+      await tester.tap(legsTab);
+      await tester.pumpAndSettle();
+
+      // Eyes sort ahead of legs in the tab row.
+      controller.addItems([
+        _item('eyes_wink', AvatarSlot.eyes, 30),
+        _item('eyes_star', AvatarSlot.eyes, 30),
+      ]);
+      await tester.pumpAndSettle();
+
+      expect(_cardsForSlot(tester, AvatarSlot.legs), 1);
+      expect(_cardsForSlot(tester, AvatarSlot.eyes), 0);
+    });
+
+    testWidgets('with nothing to choose anywhere it says so', (tester) async {
+      // A first offline launch: only the bundled default outfit is known.
+      await _pumpShop(tester, catalog: [
+        _item('torso_base', AvatarSlot.torso, 20,
+            owned: true, isDefault: true),
+        _item('eyes_base', AvatarSlot.eyes, 30, owned: true, isDefault: true),
+      ]);
+
+      expect(find.byType(FilterChipRow), findsNothing);
+      expect(find.byType(ShopItemCard), findsNothing);
+      expect(find.text(AppStrings.shopEmptySlot), findsOneWidget);
+      expect(find.text(AppStrings.shopLoadFailed), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    // BR-QFW7WF: with the API down the catalog never arrived, and the screen
+    // said "nothing here yet" — the failure hid behind what read as an empty
+    // or endlessly loading shop.
+    for (final (name, size) in [
+      ('phone', const Size(360, 800)),
+      ('desktop', const Size(1400, 900)),
+    ]) {
+      testWidgets('a catalog that never arrived says so on $name',
+          (tester) async {
+        final controller = await _pumpShop(
+          tester,
+          size: size,
+          fromCache: true,
+          catalog: [
+            _item('torso_base', AvatarSlot.torso, 20,
+                owned: true, isDefault: true),
+          ],
+        );
+
+        expect(find.text(AppStrings.shopLoadFailed), findsOneWidget);
+        expect(find.text(AppStrings.shopEmptySlot), findsNothing);
+
+        final buildsBefore = controller.builds;
+        await tester.tap(find.text(AppStrings.shopRetry));
+        await tester.pumpAndSettle();
+
+        expect(controller.builds, greaterThan(buildsBefore),
+            reason: 'retry has to fetch the catalog again');
+      });
+    }
+
+    testWidgets('a saved catalog stays quiet about being offline',
+        (tester) async {
+      // With items on screen the user can shop normally; a failure notice
+      // over a working screen is noise.
+      await _pumpShop(tester, fromCache: true);
+
+      expect(find.byType(ShopItemCard), findsWidgets);
+      expect(find.text(AppStrings.shopLoadFailed), findsNothing);
+    });
   });
 
   testWidgets('tapping an unowned item acquires it and wears it', (tester) async {

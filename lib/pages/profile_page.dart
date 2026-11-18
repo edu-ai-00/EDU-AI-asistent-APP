@@ -26,7 +26,6 @@ class ProfilePage extends StatefulWidget {
   final int coursesCount;
   final int streakDays;
   final int achievementsCount;
-  final bool notificationsEnabled;
   final String currentLanguage;
   final VoidCallback? onBack;
   final VoidCallback? onAchievementsTap;
@@ -35,7 +34,9 @@ class ProfilePage extends StatefulWidget {
   final VoidCallback? onAvatarTap;
   final VoidCallback? onPrivacyTap;
   final VoidCallback? onDoplnkyTap;
-  final Function(bool)? onNotificationsChanged;
+
+  /// "Oznámení" — opens the notification settings (NOTIF-6).
+  final VoidCallback? onNotificationsTap;
   final VoidCallback? onLanguageTap;
   final VoidCallback? onThemeTap;
   final VoidCallback? onAboutTap;
@@ -53,7 +54,6 @@ class ProfilePage extends StatefulWidget {
     this.coursesCount = 0,
     this.streakDays = 1,
     this.achievementsCount = 0,
-    this.notificationsEnabled = true,
     this.currentLanguage = '',
     this.onBack,
     this.onAchievementsTap,
@@ -62,7 +62,7 @@ class ProfilePage extends StatefulWidget {
     this.onAvatarTap,
     this.onPrivacyTap,
     this.onDoplnkyTap,
-    this.onNotificationsChanged,
+    this.onNotificationsTap,
     this.onLanguageTap,
     this.onThemeTap,
     this.onAboutTap,
@@ -76,13 +76,11 @@ class ProfilePage extends StatefulWidget {
 }
 
 class _ProfilePageState extends State<ProfilePage> with ThemeAwareState {
-  late bool _notificationsEnabled;
   late String _displayName;
 
   @override
   void initState() {
     super.initState();
-    _notificationsEnabled = widget.notificationsEnabled;
     _displayName = widget.userName;
   }
 
@@ -179,10 +177,10 @@ class _ProfilePageState extends State<ProfilePage> with ThemeAwareState {
                   onTap: widget.onThemeTap,
                 ),
                 _buildDivider(),
-                _buildDisabledItem(
+                _buildSettingsItem(
                   icon: Icons.notifications_outlined,
                   label: AppStrings.profileNotifications,
-                  trailing: AppStrings.profileComingSoon,
+                  onTap: widget.onNotificationsTap,
                 ),
                 _buildDivider(),
                 _buildSettingsItem(
@@ -526,78 +524,12 @@ class _ProfilePageState extends State<ProfilePage> with ThemeAwareState {
     );
   }
 
-  Widget _buildToggleItem({
-    required IconData icon,
-    required String label,
-    required bool value,
-    required Function(bool) onChanged,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      child: Row(
-        children: [
-          Icon(
-            icon,
-            size: 22,
-            color: AppColors.primaryDark,
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              label,
-              style: AppTextStyles.statSuffix(),
-            ),
-          ),
-          Switch(
-            value: value,
-            onChanged: onChanged,
-            activeColor: AppColors.primaryDark,
-            activeTrackColor: AppColors.primary,
-            inactiveThumbColor: Colors.white,
-            inactiveTrackColor: AppColors.primaryDark16,
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildDivider() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Container(
         height: 1,
         color: AppColors.primaryDark08,
-      ),
-    );
-  }
-
-  Widget _buildDisabledItem({
-    required IconData icon,
-    required String label,
-    String? trailing,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      child: Row(
-        children: [
-          Icon(
-            icon,
-            size: 22,
-            color: AppColors.primaryDark32,
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              label,
-              style: AppTextStyles.statSuffix(color: AppColors.primaryDark32),
-            ),
-          ),
-          if (trailing != null)
-            Text(
-              trailing,
-              style: AppTextStyles.bodySmall(color: AppColors.primaryDark24),
-            ),
-        ],
       ),
     );
   }

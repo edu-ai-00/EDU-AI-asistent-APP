@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 import '../core/consent/minor_mode.dart';
 import '../core/database/app_database.dart';
+import '../core/monitoring/sentry_user.dart';
 import '../core/network/api_client.dart';
 import '../core/oauth/oauth_clients.dart';
 import '../core/providers/core_providers.dart';
@@ -81,6 +82,7 @@ class _AuthWrapperState extends ConsumerState<AuthWrapper> {
         // If online, verify with the API server
         final isOnline = await connectivity.isOnline;
         if (isOnline && apiClient.isAuthenticated) {
+          final sentryEpoch = sentryUserEpoch;
           try {
             final response = await apiClient.get('/api/user')
                 .timeout(const Duration(seconds: 10), onTimeout: () {
@@ -88,6 +90,8 @@ class _AuthWrapperState extends ConsumerState<AuthWrapper> {
             });
             if (response.statusCode == 200) {
               final userData = response.data as Map<String, dynamic>;
+              // The one response that names the role — see sentryUserFor.
+              identifySentryUser(userData, epoch: sentryEpoch);
               final serverName = userData['name'] as String? ?? '';
               final serverAvatarIndex = userData['avatar_index'] as int? ?? 0;
               final serverSubjects = userData['selected_subjects'];
@@ -235,9 +239,11 @@ class _AuthWrapperState extends ConsumerState<AuthWrapper> {
   }
 
   Future<void> _handleOAuthSuccess(OAuthExchangeResult exchange) async {
+    final sentryEpoch = sentryUserEpoch;
     try {
       final apiClient = ref.read(apiClientProvider);
       await apiClient.setAuthToken(exchange.token);
+      identifySentryUser(exchange.user, epoch: sentryEpoch);
       ref.invalidate(isAuthenticatedProvider);
 
       // Persist session metadata so inactivity/expiry logic works correctly.

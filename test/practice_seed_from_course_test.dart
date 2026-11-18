@@ -4,9 +4,11 @@
 // guest who logged into an account kept only the cards from their guest
 // session (e.g. 7) and never gained the account's full configured set (e.g.
 // 10). `PracticeRepository.seedCardsFromCourse` fixes the "missing blocks" half
-// of that bug: it materialises a practice card for EVERY default_practice block
-// of a course, independent of lesson completion, and marks each pending so the
-// sync layer uploads them.
+// of that bug: it materialises a practice card for every default_practice
+// block of the lessons the student finished, and marks each pending so the
+// sync layer uploads them. It no longer seeds unfinished lessons (BR-B5QBBS,
+// see practice_finished_lessons_only_test.dart), so the course here is a
+// finished one.
 import 'dart:convert';
 import 'dart:io';
 
@@ -55,13 +57,18 @@ void main() {
     }
 
     const userId = 'user-1';
-    final course = Course.fromJsonData(id: 'course-1', data: data);
+    final course = Course.fromJsonData(
+      id: 'course-1',
+      data: data,
+      completedLessons: (data['lessons'] as List).length,
+      isCompleted: true,
+    );
     final repo = PracticeRepository(db: db);
 
     // The model must agree exactly 3 blocks are default_practice.
     expect(course.getDefaultPracticeBlocks().length, 3);
 
-    // First seed creates all 3 — regardless of any lesson-completion state.
+    // First seed creates all 3 — every lesson of the course is finished.
     final created = await repo.seedCardsFromCourse(userId: userId, course: course);
     expect(created, 3);
 

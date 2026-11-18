@@ -6,15 +6,19 @@ import '../core/gamification/dashboard_tiers.dart';
 import '../core/strings/app_strings.dart';
 import '../core/strings/locale_manager.dart';
 import '../core/theme/app_theme.dart';
+import '../core/notifications/notification_event_queue.dart';
+import '../core/notifications/push/push_messaging.dart';
 import '../core/providers/core_providers.dart';
 import '../core/providers/bookmark_provider.dart';
 import '../core/providers/navigation_providers.dart';
+import '../core/providers/notification_providers.dart';
 import '../core/providers/practice_providers.dart';
 import '../core/sync/sync_service.dart';
 import '../core/util/classroom_join_flow.dart';
 import '../core/util/markdown_link_handler.dart';
 import '../core/util/silent_log.dart';
 import '../routing/deep_link.dart';
+import '../routing/notification_deep_link.dart';
 import '../routing/tab_routes.dart';
 import '../data/repositories/consent_repository.dart';
 import '../data/repositories/oauth_repository.dart';
@@ -32,6 +36,7 @@ import 'edit_profile_page.dart';
 import 'doplnky_page.dart';
 import 'knihovna_page.dart';
 import 'kurzy_page.dart';
+import 'notification_settings_page.dart';
 import 'novinky_page.dart';
 import 'prehled_page.dart';
 import 'privacy_page.dart';
@@ -82,8 +87,10 @@ class _MainScreenState extends ConsumerState<MainScreen>
   /// Index of the Novinky (news) tab in [pages] / the bottom nav.
   static const int _newsTabIndex = 4;
 
-  /// How often to poll the server for news while the app is in the foreground.
-  /// Lightweight stand-in for push until real notifications exist.
+  /// How often to poll the server for the Novinky badge (news +
+  /// notifications) while the app is in the foreground. Push covers Android
+  /// and iOS when it is allowed; this keeps web, desktop and devices without
+  /// push permission current too.
   static const Duration _newsPollInterval = Duration(seconds: 60);
 
   Timer? _newsPollTimer;
@@ -91,6 +98,9 @@ class _MainScreenState extends ConsumerState<MainScreen>
   /// Watches the sync engine so caches that a sync can change (practice queue,
   /// bookmarks) refresh when it finishes — see [_watchSyncCompletion].
   StreamSubscription<SyncState>? _syncStateSub;
+
+  /// Pushes that arrive while the app is open, shown as a snack bar.
+  StreamSubscription<PushMessage>? _foregroundPushSub;
 
   @override
   void initState() {
@@ -102,6 +112,13 @@ class _MainScreenState extends ConsumerState<MainScreen>
     // Populate the news badge on launch.
     ref.read(unreadNewsCountProvider.notifier).refresh();
     _startNewsPolling();
+    // Every login path ends with this screen mounting, so this is where push
+    // starts for the session (and the device timezone is sent along).
+    WidgetsBinding.instance.addPostFrameCallback((_) => _startNotifications());
+    // And a push whose tap brought the app up, or landed while a page was
+    // being popped.
+    WidgetsBinding.instance
+        .addPostFrameCallback((_) => _consumePendingNotificationLink());
     // Open a course that arrived via a /course|/pin deep link, now that the app
     // is authenticated and on the main screen.
     WidgetsBinding.instance.addPostFrameCallback((_) => _consumePendingDeepLink());
@@ -118,6 +135,7 @@ class _MainScreenState extends ConsumerState<MainScreen>
   void dispose() {
     _newsPollTimer?.cancel();
     _syncStateSub?.cancel();
+    _foregroundPushSub?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -125,9 +143,11 @@ class _MainScreenState extends ConsumerState<MainScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      // Foreground again — pull the latest news and resume polling.
+      // Foreground again — pull the latest news, resume polling and send the
+      // notification events gathered meanwhile.
       _refreshNews();
       _startNewsPolling();
+      ref.read(notificationEventsProvider).flush();
     } else if (state == AppLifecycleState.paused) {
       // Backgrounded — stop polling to avoid needless requests.
       _newsPollTimer?.cancel();
@@ -140,12 +160,76 @@ class _MainScreenState extends ConsumerState<MainScreen>
     _newsPollTimer = Timer.periodic(_newsPollInterval, (_) => _refreshNews());
   }
 
-  /// Refresh news state: update the unread badge (works on any tab) and
-  /// invalidate the cached list so a visible Novinky tab refetches.
+  /// Refresh Novinky: update the unread badge (works on any tab) and, when the
+  /// feed is on screen, bring in what is new at its top without dropping the
+  /// pages already scrolled through.
   void _refreshNews() {
     if (!mounted) return;
     ref.read(unreadNewsCountProvider.notifier).refresh();
-    ref.invalidate(newsListProvider);
+    if (ref.exists(feedControllerProvider)) {
+      ref.read(feedControllerProvider.notifier).refreshHead();
+    }
+  }
+
+  /// Start the notification layer for this session: push (no-op where it is
+  /// not offered), the device timezone, and the events left from last time.
+  void _startNotifications() {
+    if (!mounted) return;
+    final push = ref.read(pushControllerProvider);
+    _foregroundPushSub ??= push.foregroundMessages.listen(_showForegroundPush);
+    unawaited(push.start());
+    unawaited(ref.read(notificationTimezoneSyncProvider).sync());
+    unawaited(ref.read(notificationEventsProvider).flush());
+  }
+
+  /// A push arrived while the app is open. The OS does not show it, so the
+  /// app does — as a snack bar whose action opens it.
+  void _showForegroundPush(PushMessage message) {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (messenger == null) return;
+    final body = message.body;
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 6),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                message.title ?? AppStrings.notificationNewFallback,
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+              if (body != null && body.isNotEmpty)
+                Text(body, maxLines: 2, overflow: TextOverflow.ellipsis),
+            ],
+          ),
+          action: SnackBarAction(
+            label: AppStrings.notificationOpen,
+            onPressed: () => _openForegroundPush(message),
+          ),
+        ),
+      );
+  }
+
+  Future<void> _openForegroundPush(PushMessage message) async {
+    final events = ref.read(notificationEventsProvider);
+    await events.record(message.notificationId, NotificationEventType.clicked);
+    unawaited(events.flush());
+    if (!mounted) return;
+    await openNotificationLink(context, ref, message.deepLink, fromPush: true);
+  }
+
+  /// Open the link of a tapped push, if one is parked. Read-and-clear, so it
+  /// opens once.
+  void _consumePendingNotificationLink() {
+    if (!mounted) return;
+    final link = ref.read(pendingNotificationLinkProvider);
+    if (link == null) return;
+    ref.read(pendingNotificationLinkProvider.notifier).state = null;
+    unawaited(openNotificationLink(context, ref, link, fromPush: true));
   }
 
   Future<void> _consumePendingDeepLink() async {
@@ -218,6 +302,8 @@ class _MainScreenState extends ConsumerState<MainScreen>
       // Cards pulled from the server (a fresh sign-in, another device) must
       // reach the practice picker too, not only the queue (BR-27AEMT).
       ref.invalidate(practiceScopeProvider);
+      // Notification events ride the same cycle as the rest of the outbox.
+      unawaited(ref.read(notificationEventsProvider).flush());
     } catch (e, st) {
       silentLog('main_screen:refresh_after_sync', e, st);
     }
@@ -312,15 +398,22 @@ class _MainScreenState extends ConsumerState<MainScreen>
       _refreshNews();
     }
     // Moves the URL as well as the tab, so the browser records the section and
-    // its back button walks between tabs (BR-7RNBZ9).
-    goToMainTab(context, ref, index);
+    // its back button walks between tabs (BR-7RNBZ9). The "+" tapped on the
+    // library itself opens the course-code dialog instead (BR-RRSCCK).
+    tapMainTab(context, ref, index);
   }
 
+  /// Open Doplňky, at `/tools` (BR-N6B622). Every way in comes through here —
+  /// the dashboard card, the sidebar, the profile row, the route itself.
   void openDoplnky() {
+    openShellPage(context, ref, ShellIntent.openDoplnky, _pushDoplnky);
+  }
+
+  Future<void> _pushDoplnky() async {
     // Refetch on every open: entitlement (attempts left, cooldown) goes stale
     // the moment the user plays anywhere else.
     ref.invalidate(miniGamesListProvider);
-    Navigator.of(context).push(
+    await Navigator.of(context).push(
       shellPageRoute(
         context,
         builder: (_) => const DoplnkyPage(),
@@ -361,7 +454,12 @@ class _MainScreenState extends ConsumerState<MainScreen>
     }
   }
 
+  /// Open the profile, at `/profile` (BR-N6B622) — see [openDoplnky].
   void openProfile() {
+    openShellPage(context, ref, ShellIntent.openProfile, _pushProfile);
+  }
+
+  Future<void> _pushProfile() async {
     final userAsync = ref.read(activeUserStreamProvider);
     final userName = userAsync.valueOrNull?.name ?? AppStrings.defaultUserName;
     final userEmail = userAsync.valueOrNull?.email ?? '';
@@ -379,7 +477,7 @@ class _MainScreenState extends ConsumerState<MainScreen>
     final statsAsync = ref.read(userStatsStreamProvider);
     final stats = statsAsync.valueOrNull;
 
-    navigator.push(
+    await navigator.push(
       PageRouteBuilder(
         pageBuilder: (ctx, animation, secondaryAnimation) => ProfilePage(
           userName: userName,
@@ -429,6 +527,14 @@ class _MainScreenState extends ConsumerState<MainScreen>
           // Pushes above the profile page on the root navigator, same as the
           // library shortcut.
           onDoplnkyTap: openDoplnky,
+          onNotificationsTap: () {
+            navigator.push(
+              shellPageRoute(
+                context,
+                builder: (_) => const NotificationSettingsPage(),
+              ),
+            );
+          },
           // The avatar editor is the shop screen; from here it is a direct
           // account action, not a step inside Doplňky (BR-KB7XSJ).
           onAvatarTap: () {
@@ -502,7 +608,8 @@ class _MainScreenState extends ConsumerState<MainScreen>
 
   void _navigateToAchievements(NavigatorState navigator, UserStats? stats) async {
     final config = ref.read(gamificationConfigProvider).valueOrNull;
-    final earnedIds = ref.read(earnedAchievementsProvider).valueOrNull ?? <String>[];
+    final earnedIds =
+        await readEarnedAchievementIds(ref.read(appDatabaseProvider));
 
     // Refresh skills to get latest data (may fetch from API if not synced yet).
     ref.invalidate(skillDisplayProvider);
@@ -528,7 +635,7 @@ class _MainScreenState extends ConsumerState<MainScreen>
           coursesCompleted: counts.courses,
           quizzesCompleted: counts.quizzes,
           config: config,
-          earnedIds: earnedIds.toSet(),
+          earnedIds: earnedIds,
           skills: skills,
         ),
       ),
@@ -578,7 +685,19 @@ class _MainScreenState extends ConsumerState<MainScreen>
     ref.listen<ShellIntent?>(pendingShellIntentProvider, (_, intent) {
       if (intent == null) return;
       WidgetsBinding.instance
-          .addPostFrameCallback((_) => _consumePendingShellIntent());
+        ..addPostFrameCallback((_) => _consumePendingShellIntent())
+        // A post-frame callback does not ask for a frame. `/tools` and
+        // `/profile` park their intent from ShellEntry's own post-frame
+        // callback, and after a browser back/forward nothing else may be
+        // about to draw — the page would wait for the next mouse move.
+        ..ensureVisualUpdate();
+    });
+
+    // A push tapped while this screen is up (background → foreground).
+    ref.listen<String?>(pendingNotificationLinkProvider, (_, link) {
+      if (link == null) return;
+      WidgetsBinding.instance
+          .addPostFrameCallback((_) => _consumePendingNotificationLink());
     });
 
     final List<Widget> pages = [
@@ -623,6 +742,7 @@ class _MainScreenState extends ConsumerState<MainScreen>
           // const SyncStatusBanner(),
           ShellBanners(
             onLogout: () => widget.onLogout?.call(),
+            onRegisterTap: _pushGuestUpgradeLogin,
             // Rebuild so the banner re-reads the now-cleared shared flag
             // and hides itself after "this is my device".
             onConverted: () {

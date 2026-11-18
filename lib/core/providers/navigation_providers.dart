@@ -19,6 +19,19 @@ const int kKurzyTabIndex = 3;
 /// conversation (BR-HCF5AS).
 const int kChatTabIndex = 1;
 
+/// Index of the Knihovna tab — the floating "+" in the middle of the phone
+/// bottom bar.
+const int kLibraryTabIndex = 2;
+
+/// Asks the Knihovna tab to open its "Máš kód kurzu?" dialog.
+///
+/// A counter, like `requestGuestLoginProvider`: each bump is one request, and
+/// the page listens rather than reads, so a request made before it was on
+/// screen is never replayed when it opens. Bumped by [tapMainTab] in
+/// `tab_routes.dart` when the "+" is tapped on the library itself (BR-RRSCCK);
+/// the dialog lives in `KnihovnaPage` state, out of the shell's reach.
+final libraryCodeDialogRequestProvider = StateProvider<int>((ref) => 0);
+
 /// Something a pushed page's sidebar wants `MainScreen` to do after the page
 /// pops back.
 ///

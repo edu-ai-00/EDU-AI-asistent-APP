@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
+import '../monitoring/sentry_user.dart';
 import '../network/api_client.dart';
 import '../network/api_endpoints.dart';
 
@@ -117,6 +118,7 @@ class GuestAuthService {
       _prefs.remove(_forceNewKey);
     }
 
+    final sentryEpoch = sentryUserEpoch;
     final result = await _apiClient.post<Map<String, dynamic>>(
       ApiEndpoints.guestRegister,
       data: {
@@ -140,6 +142,7 @@ class GuestAuthService {
         // Store the token
         await _apiClient.setAuthToken(token);
         await _persistSessionMeta(data);
+        identifySentryUser(user, epoch: sentryEpoch);
         return GuestRegisterResult(
           token: token,
           name: serverName,
@@ -169,6 +172,7 @@ class GuestAuthService {
   }) async {
     final normalizedCode = code.toUpperCase().trim();
 
+    final sentryEpoch = sentryUserEpoch;
     final result = await _apiClient.post<Map<String, dynamic>>(
       ApiEndpoints.resolveCode,
       data: {
@@ -192,6 +196,11 @@ class GuestAuthService {
       if (token != null && token.isNotEmpty) {
         await _apiClient.setAuthToken(token);
         await _persistSessionMeta(data);
+        identifySentryUser(
+          user,
+          isMinor: data['minor'] == true,
+          epoch: sentryEpoch,
+        );
         return ResolveCodeResult.user(
           token: token,
           userId: user?['id'] as int?,
@@ -219,6 +228,7 @@ class GuestAuthService {
   /// Returns true on success.
   Future<GuestClaimResult?> claimGuest(String email, {String? name}) async {
 
+    final sentryEpoch = sentryUserEpoch;
     final result = await _apiClient.post<Map<String, dynamic>>(
       ApiEndpoints.guestClaim,
       data: {
@@ -238,6 +248,7 @@ class GuestAuthService {
         await _apiClient.setAuthToken(token);
       }
       await _persistSessionMeta(data);
+      identifySentryUser(user, epoch: sentryEpoch);
 
       return GuestClaimResult(
         token: token,

@@ -22,6 +22,15 @@
 ///   platform convention and it was never the broken case.
 /// * **medium / expanded** — a capped-width card in the top-right corner,
 ///   stacked newest-first, auto-dismissed, tap to close.
+///
+/// ## Pages that own their bottom edge
+///
+/// The bottom `SnackBar` only steers clear of what its `Scaffold` knows about
+/// (`bottomNavigationBar`, the FAB). The course page draws its Lekce / Cvičení /
+/// Kvíz row as a `Positioned` in its own `Stack`, so on a phone the bar landed
+/// squarely on those buttons and blocked them until it timed out (BR-MKQ7H6).
+/// Such pages pass `topOnCompact`, and phones get the same toast pinned under
+/// the top edge, full width.
 library;
 
 import 'dart:async';
@@ -80,6 +89,10 @@ const int _kMaxVisible = 3;
 
 /// Shows [message] as a toast (wide) or a bottom snack bar (phones).
 ///
+/// Set [topOnCompact] from a page whose own action bar sits along the bottom
+/// edge where the snack bar would cover it: phones then get the toast too,
+/// across the top.
+///
 /// Repeating the same message — tapping a disabled confirm button over and
 /// over — restarts the visible toast instead of stacking copies.
 void showAppToast(
@@ -87,8 +100,9 @@ void showAppToast(
   String message, {
   ToastVariant variant = ToastVariant.warning,
   Duration duration = _kDefaultDuration,
+  bool topOnCompact = false,
 }) {
-  final host = context.widthClass == WidthClass.compact
+  final host = context.widthClass == WidthClass.compact && !topOnCompact
       ? null
       : ToastHost.maybeOf(context);
 
@@ -193,6 +207,11 @@ class ToastHostState extends State<ToastHost> {
 
   @override
   Widget build(BuildContext context) {
+    // Only reached on a phone through `topOnCompact`. A 380px card pinned to
+    // the right would hang off the left edge of a 360px screen, so there it
+    // spans the width between both insets, like the snack bar it replaces.
+    final compact = context.widthClass == WidthClass.compact;
+
     return _ToastScope(
       state: this,
       child: Stack(
@@ -201,6 +220,7 @@ class ToastHostState extends State<ToastHost> {
           if (_toasts.isNotEmpty)
             Positioned(
               top: MediaQuery.paddingOf(context).top + _kToastInset,
+              left: compact ? _kToastInset : null,
               right: _kToastInset,
               // The stack is a *sibling* of the Navigator, so nothing above it
               // supplies a `Material` and its text falls back to `WidgetsApp`'s
@@ -212,13 +232,19 @@ class ToastHostState extends State<ToastHost> {
               child: Material(
                 type: MaterialType.transparency,
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
+                  crossAxisAlignment: compact
+                      ? CrossAxisAlignment.stretch
+                      : CrossAxisAlignment.end,
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     // Newest on top: the reason the user is looking is the
                     // message that just fired.
                     for (final toast in _toasts.reversed)
-                      _ToastCard(key: ValueKey(toast.id), toast: toast),
+                      _ToastCard(
+                        key: ValueKey(toast.id),
+                        toast: toast,
+                        fromTop: compact,
+                      ),
                   ],
                 ),
               ),
@@ -249,9 +275,16 @@ class _ToastScope extends InheritedWidget {
 }
 
 class _ToastCard extends StatefulWidget {
-  const _ToastCard({super.key, required this.toast});
+  const _ToastCard({
+    super.key,
+    required this.toast,
+    this.fromTop = false,
+  });
 
   final _ToastData toast;
+
+  /// Drop in from the top edge (phones) rather than the right one.
+  final bool fromTop;
 
   @override
   State<_ToastCard> createState() => _ToastCardState();
@@ -289,9 +322,11 @@ class _ToastCardState extends State<_ToastCard>
     return FadeTransition(
       opacity: curve,
       child: SlideTransition(
-        // Slides in from the right edge it is anchored to.
-        position: Tween(begin: const Offset(0.12, 0), end: Offset.zero)
-            .animate(curve),
+        // Slides in from the edge it is anchored to.
+        position: Tween(
+          begin: widget.fromTop ? const Offset(0, -0.3) : const Offset(0.12, 0),
+          end: Offset.zero,
+        ).animate(curve),
         child: Padding(
           padding: const EdgeInsets.only(bottom: 12),
           child: Semantics(

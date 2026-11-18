@@ -18,7 +18,11 @@ class PromoCard extends StatelessWidget {
   /// Main title text
   final String title;
 
-  /// Description text below the title
+  /// Description text below the title.
+  ///
+  /// Keep it free of `\n`: the copy column is narrower than the card (the
+  /// mascot takes the right side), so a hard break tuned to one width leaves
+  /// a half-empty line on a phone and the rest on a third one (BR-QF7RQ6).
   final String description;
 
   /// Border color of the card

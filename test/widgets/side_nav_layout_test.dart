@@ -112,7 +112,9 @@ void main() {
                 .overrideWith((ref) => MinorModeNotifier()..state = false),
           ],
           child: MaterialApp(
-            home: Scaffold(body: ShellBanners(onLogout: () {})),
+            home: Scaffold(
+              body: ShellBanners(onLogout: () {}, onRegisterTap: () {}),
+            ),
           ),
         ),
       );

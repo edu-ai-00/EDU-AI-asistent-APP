@@ -63,6 +63,8 @@ void main() {
         '/course/676767',
         '/chat/skolnik',
         '/join/AB12',
+        '/tools',
+        '/profile',
         '/nope',
       ]) {
         expect(mainTabIndexForPath(path), isNull, reason: path);
@@ -94,13 +96,15 @@ void main() {
 
       // `/` and the deep links host the same app as the tabs, so they belong to
       // the same route: navigating between any two of them must not rebuild it.
-      const shellPaths = [
+      final shellPaths = [
         '/',
         ...mainTabPaths,
         '/course/676767',
         '/pin/676767',
         '/chat/skolnik',
         '/join/AB12',
+        // Doplňky and the profile (BR-N6B622).
+        ...shellPagePaths.values,
       ];
 
       final pages = [
@@ -144,6 +148,7 @@ void main() {
       String? deepLinkCode,
       String? chatMentorSlug,
       String? classroomJoinCode,
+      ShellIntent? shellIntent,
     }) async {
       final container = ProviderContainer();
       addTearDown(container.dispose);
@@ -157,6 +162,7 @@ void main() {
               deepLinkCode: deepLinkCode,
               chatMentorSlug: chatMentorSlug,
               classroomJoinCode: classroomJoinCode,
+              shellIntent: shellIntent,
               child: const Scaffold(body: Text('shell')),
             ),
           ),
@@ -275,6 +281,51 @@ void main() {
       expect(container.read(pendingClassroomJoinCodeProvider), 'AB12');
       expect(container.read(pendingDeepLinkCodeProvider), isNull);
       expect(container.read(mainTabIndexProvider), 0);
+    });
+
+    testWidgets('parks the page a /tools or /profile route opens (BR-N6B622)',
+        (tester) async {
+      // MainScreen builds the page; the route only says which one. The tab
+      // stays put — the page opens over whatever is showing.
+      final container = await pumpEntry(
+        tester,
+        shellIntent: ShellIntent.openDoplnky,
+      );
+
+      expect(container.read(pendingShellIntentProvider), ShellIntent.openDoplnky);
+      expect(container.read(mainTabIndexProvider), 0);
+    });
+
+    testWidgets('a page route closes pushed detail pages first',
+        (tester) async {
+      // Doplňky replaces the profile instead of stacking on it, as it does
+      // from a pushed page's sidebar.
+      final container = await pumpEntry(tester, tabIndex: 2);
+
+      final navigator = tester.state<NavigatorState>(find.byType(Navigator));
+      navigator.push(
+        MaterialPageRoute<void>(
+          builder: (_) => const Scaffold(body: Text('profile')),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const MaterialApp(
+            home: ShellEntry(
+              shellIntent: ShellIntent.openDoplnky,
+              child: Scaffold(body: Text('shell')),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('profile'), findsNothing);
+      expect(container.read(pendingShellIntentProvider), ShellIntent.openDoplnky);
+      expect(container.read(mainTabIndexProvider), 2);
     });
   });
 

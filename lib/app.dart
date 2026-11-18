@@ -9,9 +9,11 @@ import 'core/strings/app_strings.dart';
 import 'core/strings/locale_manager.dart';
 import 'core/theme/app_theme.dart';
 import 'core/ui/app_toast.dart';
+import 'core/ui/stranded_keyboard_guard.dart';
 import 'core/util/drag_scroll_behavior.dart';
 import 'data/repositories/consent_repository.dart';
 import 'routing/app_router.dart';
+import 'widgets/install_app_prompt.dart';
 
 class MyApp extends ConsumerStatefulWidget {
   const MyApp({super.key});
@@ -87,14 +89,24 @@ class _MyAppState extends ConsumerState<MyApp> {
       //    once, context-free) cannot have — see BR-8H9WTT.
       //  * `ToastHost` must outlive route pushes and be positioned against the
       //    window, not against whichever pane the caller happens to live in.
+      //  * `InstallAppPrompt` must stay up until answered, whatever the boot
+      //    flow pushes or pops underneath it (BR-FBF78W).
+      //  * `StrandedKeyboardGuard` watches the keyboard of every route, so a
+      //    page that is left takes no stranded keyboard with it (BR-KDKQBR).
       builder: (context, child) {
-        return ColoredBox(
-          color: AppColors.background,
-          child: Theme(
-            data: Theme.of(context).copyWith(
-              snackBarTheme: AppTheme.snackBarThemeFor(context),
+        return StrandedKeyboardGuard(
+          child: ColoredBox(
+            color: AppColors.background,
+            child: Theme(
+              data: Theme.of(context).copyWith(
+                snackBarTheme: AppTheme.snackBarThemeFor(context),
+              ),
+              child: ToastHost(
+                child: InstallAppPrompt(
+                  child: child ?? const SizedBox.shrink(),
+                ),
+              ),
             ),
-            child: ToastHost(child: child ?? const SizedBox.shrink()),
           ),
         );
       },

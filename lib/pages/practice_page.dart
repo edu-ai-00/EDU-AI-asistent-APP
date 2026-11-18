@@ -408,7 +408,7 @@ class _SubjectTile extends ConsumerWidget {
       child: ExpansionTile(
         initiallyExpanded: initiallyExpanded,
         tilePadding: const EdgeInsets.symmetric(horizontal: 8),
-        childrenPadding: const EdgeInsets.only(left: 24, bottom: 8),
+        childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
         leading: Checkbox(
           tristate: true,
           value: isFull ? true : (selected == 0 ? false : null),
@@ -430,12 +430,30 @@ class _SubjectTile extends ConsumerWidget {
               )
             : null,
         children: [
-          for (final area in subject.areas)
-            _AreaRow(
-              area: area,
-              scope: scope,
-              selected: PracticeSelection.isAreaSelected(filter, area),
+          // Areas are one level below their subject. An indented checkbox
+          // alone did not read as that — on the white card it looked like a
+          // misaligned one (BR-QS4TXB) — so the areas sit on a tinted panel
+          // of their own, and the panel carries the nesting.
+          Material(
+            key: ValueKey('practice-areas-${subject.id}'),
+            color: AppColors.primary.withValues(alpha: 0.1),
+            borderRadius: AppDecorations.radiusM,
+            // Keeps the rows' ink splashes inside the rounded corners.
+            clipBehavior: Clip.antiAlias,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Column(
+                children: [
+                  for (final area in subject.areas)
+                    _AreaRow(
+                      area: area,
+                      scope: scope,
+                      selected: PracticeSelection.isAreaSelected(filter, area),
+                    ),
+                ],
+              ),
             ),
+          ),
         ],
       ),
     );
@@ -464,7 +482,9 @@ class _AreaRow extends ConsumerWidget {
       onTap: () =>
           notifier.setArea(scope: scope, area: area, selected: !selected),
       child: Padding(
-        padding: const EdgeInsets.only(right: 16),
+        // With the panel's 16 px inset, 8 more puts the area title in line
+        // with its subject's title above.
+        padding: const EdgeInsets.only(left: 8, right: 12),
         child: Row(
           children: [
             Checkbox(

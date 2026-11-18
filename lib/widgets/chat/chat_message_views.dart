@@ -140,6 +140,8 @@ class ChatBubble extends StatelessWidget {
                         content: content,
                         textStyle:
                             AppTextStyles.bodySmall().copyWith(height: 1.5),
+                        // Mentors write \(…\) as often as $…$ (BR-4ZFY6D).
+                        bracketDelimiters: true,
                       ),
                       if (suggestions.isNotEmpty) ...[
                         const SizedBox(height: 16),

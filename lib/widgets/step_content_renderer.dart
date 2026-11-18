@@ -19,6 +19,7 @@ import '../models/block_model.dart';
 import '../models/step_navigation.dart';
 import 'answer_photo_picker.dart';
 import 'lesson_image.dart';
+import 'lesson_text_style.dart';
 import 'markdown_latex_widget.dart';
 import 'open_answer_feedback_card.dart';
 
@@ -162,14 +163,20 @@ class StepContentRenderer extends StatelessWidget {
   List<Widget> _buildTextStep() {
     final widgets = <Widget>[];
 
-    // Image above text (position "above" or default)
-    if (step.hasImage && (step.position == null || step.position == 'above')) {
+    // Only "below" moves the media under the text. Everything else — "above",
+    // no position, and the admin's "Inline with Content" — goes above it;
+    // "inline" used to match neither branch, so the picture was never drawn
+    // (BR-TFCS5D).
+    final mediaBelow = step.position == 'below';
+
+    // Image above text
+    if (step.hasImage && !mediaBelow) {
       widgets.add(_buildStepImage(step.image!));
       widgets.add(const SizedBox(height: 12));
     }
 
     // Video above text
-    if (step.hasVideo && (step.position == null || step.position == 'above')) {
+    if (step.hasVideo && !mediaBelow) {
       widgets.add(_buildStepVideo());
       widgets.add(const SizedBox(height: 12));
     }
@@ -182,13 +189,13 @@ class StepContentRenderer extends StatelessWidget {
     }
 
     // Image below text
-    if (step.hasImage && step.position == 'below') {
+    if (step.hasImage && mediaBelow) {
       widgets.add(const SizedBox(height: 12));
       widgets.add(_buildStepImage(step.image!));
     }
 
     // Video below text
-    if (step.hasVideo && step.position == 'below') {
+    if (step.hasVideo && mediaBelow) {
       widgets.add(const SizedBox(height: 12));
       widgets.add(_buildStepVideo());
     }
@@ -972,7 +979,7 @@ class StepContentRenderer extends StatelessWidget {
                       )
                     : Text(
                         option.feedback!,
-                        style: AppTextStyles.meta(color: AppColors.primaryDark88),
+                        style: lessonBodyStyle(AppColors.primaryDark88),
                       ),
               ),
             ],
@@ -1012,7 +1019,7 @@ class StepContentRenderer extends StatelessWidget {
           else
             Text(
               config.solution!,
-              style: AppTextStyles.meta(color: AppColors.primaryDark80),
+              style: lessonBodyStyle(AppColors.primaryDark80),
             ),
           if (config.solutionImage != null) ...[
             const SizedBox(height: 8),
@@ -1274,6 +1281,9 @@ class StepContentRenderer extends StatelessWidget {
   }
 
   /// Render a single text segment: markdown first, then HTML, then plain text.
+  ///
+  /// All three share [lessonBodyStyle], so whether the author happened to use
+  /// markdown does not show in the size or colour of the text (BR-92JSBK).
   Widget _buildTextBody(String text, String? html, bool isMarkdown) {
     if (isMarkdown) {
       return MarkdownLatexWidget(
@@ -1287,33 +1297,12 @@ class StepContentRenderer extends StatelessWidget {
       return Html(
         data: resolveHtmlImageUrls(htmlData),
         extensions: lessonHtmlImageExtensions(),
-        style: {
-          'body': Style(
-            margin: Margins.zero,
-            padding: HtmlPaddings.zero,
-            fontSize: FontSize(15),
-            fontWeight: FontWeight.w500,
-            color: AppColors.primaryDark88,
-            lineHeight: const LineHeight(1.5),
-            fontFamily: 'Poppins',
-          ),
-          'p': Style(margin: Margins.only(bottom: 12)),
-          'h3': Style(
-            fontSize: FontSize(18),
-            fontWeight: FontWeight.w700,
-            color: AppColors.primaryDark,
-            margin: Margins.only(bottom: 12, top: 8),
-          ),
-          'strong': Style(fontWeight: FontWeight.w700, color: AppColors.primaryDark),
-          'em': Style(fontStyle: FontStyle.italic),
-          'ul': Style(margin: Margins.only(bottom: 12)),
-          'li': Style(margin: Margins.only(bottom: 6)),
-        },
+        style: lessonHtmlStyle(),
       );
     }
     return Text(
       text,
-      style: AppTextStyles.body(color: AppColors.primaryDark.withValues(alpha: 0.72), height: 1.5),
+      style: lessonBodyStyle(AppColors.primaryDark),
     );
   }
 

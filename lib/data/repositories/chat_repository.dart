@@ -114,18 +114,23 @@ class ChatRepository {
   }
 
   /// The session a `/chat/:mentor` link should open: the student's most recent
-  /// conversation with that mentor, and a new one only when there is none.
+  /// conversation with that mentor, or null when there is none.
   ///
   /// The link is the only way into the RAG mentor on the web build, so opening
   /// it always created a fresh session — close the browser, come back to the
   /// same URL, and the chat was empty while the real transcript sat under the
-  /// previous session id (BR-VC5HPV). Starting a *new* chat with the same
-  /// mentor is still the picker's job, which keeps calling [createSession].
+  /// previous session id (BR-VC5HPV).
+  ///
+  /// Null does not create one: a conversation starts with the student's first
+  /// message (Rule 11.6), so the caller opens the chat without a session and
+  /// ChatDetailPage creates it on send. Creating it here left an empty chat in
+  /// the history of every student who followed the link and typed nothing
+  /// (BR-ESXSZY).
   ///
   /// A first visit on this device has nothing local to resume, so the history
   /// is pulled once before giving up — the server knows the conversation even
   /// when this browser's storage does not.
-  Future<ChatSessionsTableData> resumeOrCreateSession(
+  Future<ChatSessionsTableData?> findSessionToResume(
       String userId, String personaSlug) async {
     final local = await _local.getLatestSessionForPersona(userId, personaSlug);
     if (local != null) return local;
@@ -136,12 +141,10 @@ class ChatRepository {
       } catch (_) {
         // Offline-ish or the endpoint failed: fall through and start a chat.
       }
-      final pulled =
-          await _local.getLatestSessionForPersona(userId, personaSlug);
-      if (pulled != null) return pulled;
+      return _local.getLatestSessionForPersona(userId, personaSlug);
     }
 
-    return createSession(userId, personaSlug);
+    return null;
   }
 
   // === Send message (server-first + SSE) ===

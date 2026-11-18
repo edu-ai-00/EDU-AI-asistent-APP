@@ -39,6 +39,33 @@ void main() {
     return value.text;
   }
 
+  /// Field state "text with the cursor at the `|`", e.g. `3|.5`.
+  TextEditingValue field(String marked) {
+    final offset = marked.indexOf('|');
+    return TextEditingValue(
+      text: marked.replaceFirst('|', ''),
+      selection: TextSelection.collapsed(offset: offset),
+    );
+  }
+
+  /// Types [char] at the cursor of [marked] and returns the result in the
+  /// same `|` notation, so a test pins both the text and where the cursor
+  /// ended up.
+  String typeAt(String marked, String char) {
+    final before = field(marked);
+    final at = before.selection.baseOffset;
+    final next = before.text.replaceRange(at, at, char);
+    final after = formatter.formatEditUpdate(
+      before,
+      TextEditingValue(
+        text: next,
+        selection: TextSelection.collapsed(offset: at + char.length),
+      ),
+    );
+    final cursor = after.selection.baseOffset;
+    return after.text.replaceRange(cursor, cursor, '|');
+  }
+
   group('DecimalNumberFormatter — accepts numbers', () {
     test('keeps plain digits', () {
       expect(type('42'), '42');
@@ -77,10 +104,10 @@ void main() {
       expect(paste('12 kusů'), '12');
     });
 
-    test('keeps only the first decimal separator', () {
+    test('keeps only one decimal separator', () {
       expect(type('1.2.3'), '1.23');
       expect(type('1,2,3'), '1,23');
-      expect(type('1.2,3'), '1.23');
+      expect(paste('1.2,3'), '1.23');
     });
 
     test('keeps a minus only in leading position', () {
@@ -91,6 +118,46 @@ void main() {
     test('drops whitespace and separators the grader cannot parse', () {
       expect(paste('1 000'), '1000');
       expect(paste('4 %'), '4');
+    });
+  });
+
+  // BR-M9ZY4D: with a dot already in the field (an English-layout numpad
+  // types one), a typed comma used to vanish and throw the cursor to the end,
+  // so the comma looked impossible to write.
+  group('DecimalNumberFormatter — a second separator swaps the first', () {
+    test('a comma typed after a dot turns the dot into a comma', () {
+      expect(typeAt('3.|', ','), '3,|');
+      expect(typeAt('3.5|', ','), '3,5|');
+      expect(type('1.2,3'), '1,23');
+    });
+
+    test('a dot typed after a comma turns the comma into a dot', () {
+      expect(typeAt('3,5|', '.'), '3.5|');
+    });
+
+    test('a separator typed in front of the existing one changes it', () {
+      expect(typeAt('3|.5', ','), '3|,5');
+    });
+
+    test('the digits never move, only the separator character changes', () {
+      expect(typeAt('12.34|', ','), '12,34|');
+      expect(typeAt('12|.34', ','), '12|,34');
+      expect(typeAt('1|2.34', ','), '1|2,34');
+    });
+  });
+
+  group('DecimalNumberFormatter — the cursor stays where the student typed', () {
+    test('a dropped letter leaves the cursor in place', () {
+      expect(typeAt('1|2', 'a'), '1|2');
+      expect(typeAt('|12', 'x'), '|12');
+    });
+
+    test('a dropped minus in the middle leaves the cursor in place', () {
+      expect(typeAt('1|2', '-'), '1|2');
+    });
+
+    test('an accepted digit lands at the cursor', () {
+      expect(typeAt('1|2', '5'), '15|2');
     });
   });
 

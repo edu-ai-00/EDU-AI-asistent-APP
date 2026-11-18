@@ -64,6 +64,11 @@ bool practiceOptionUnavailable({
 /// A step carrying its own hint/help overrides the block's shared one, each
 /// field independently; omit it (or pass null) for atomic blocks, which have no
 /// steps and always show the block's own text (BR-JHDNB3).
+///
+/// A step whose author filled in only the second stage — help, no hint — has no
+/// first rung to climb: the sheet then opens at the help text, skips the quick
+/// replies and hands straight over to the AI mentor where the course allows it
+/// (BR-3FE9U7).
 Future<void> showMentorSheet({
   required BuildContext context,
   required ContentBlock block,
@@ -75,8 +80,15 @@ Future<void> showMentorSheet({
   VoidCallback? onSavePractice,
   bool allowAi = true,
 }) {
+  // Nothing to reveal first means the sheet starts one rung up the ladder.
+  final hint = block.hintForStep(stepId);
+  final opensAtHelp = hint == null || hint.isEmpty;
+
   // Notify caller the hint was shown (so it can record the XP penalty).
   onShown();
+  // Opening at the help text is the help being used — the caller records the
+  // level it actually revealed, not the one it skipped.
+  if (opensAtHelp) onEscalateToHelp();
 
   return showModalBottomSheet<void>(
     context: context,
@@ -85,6 +97,7 @@ Future<void> showMentorSheet({
     builder: (_) => _MentorSheet(
       block: block,
       stepId: stepId,
+      opensAtHelp: opensAtHelp,
       buildAiContext: buildAiContext,
       onEscalateToHelp: onEscalateToHelp,
       onAskMentor: onAskMentor,
@@ -113,6 +126,9 @@ class _MentorSheet extends ConsumerStatefulWidget {
 
   /// The step the "?" was tapped on — its hint/help wins over the block's.
   final String? stepId;
+
+  /// The step has no hint, only help: open at the help text (BR-3FE9U7).
+  final bool opensAtHelp;
   final String Function() buildAiContext;
   final VoidCallback onEscalateToHelp;
   final MentorQuestionCallback onAskMentor;
@@ -122,6 +138,7 @@ class _MentorSheet extends ConsumerStatefulWidget {
   const _MentorSheet({
     required this.block,
     required this.stepId,
+    required this.opensAtHelp,
     required this.buildAiContext,
     required this.onEscalateToHelp,
     required this.onAskMentor,
@@ -142,16 +159,19 @@ class _MentorSheetState extends ConsumerState<_MentorSheet> {
   final List<_LocalBubble> _local = [];
 
   /// The quick replies disappear once the student escalates — from there on the
-  /// conversation carries on in the input field.
-  bool _showQuickReplies = true;
+  /// conversation carries on in the input field. A sheet that opened at the
+  /// help text is already past them: "Nerozumím tomu" would only repeat what
+  /// the first bubble already says.
+  late bool _showQuickReplies = !widget.opensAtHelp;
 
   /// Dropped as soon as the block has been added, so the option cannot be
   /// tapped twice.
   late bool _showPracticeReply = widget.onSavePractice != null;
 
   /// The composer appears only after "Nerozumím tomu": hint → help → AI is the
-  /// escalation ladder the ELO penalty is built on.
-  bool _composerOpen = false;
+  /// escalation ladder the ELO penalty is built on. A sheet that opened at the
+  /// help text has climbed that rung already, so its composer starts open.
+  late bool _composerOpen = widget.opensAtHelp && widget.allowAi;
 
   String? _sessionId;
   bool _isStreaming = false;
@@ -174,9 +194,7 @@ class _MentorSheetState extends ConsumerState<_MentorSheet> {
   @override
   void initState() {
     super.initState();
-    _local.add(_LocalBubble(
-        widget.block.hintForStep(widget.stepId) ?? '',
-        isUser: false));
+    _local.add(_LocalBubble(_openingMessage, isUser: false));
     _messageController.addListener(() {
       final hasText = _messageController.text.trim().isNotEmpty;
       if (hasText != _hasText) setState(() => _hasText = hasText);
@@ -201,6 +219,17 @@ class _MentorSheetState extends ConsumerState<_MentorSheet> {
         );
       }
     });
+  }
+
+  /// The mentor's opening message: the step's hint, or — when the author wrote
+  /// no hint — the help text the "?" is there to show instead (BR-3FE9U7).
+  String get _openingMessage {
+    final text = widget.opensAtHelp
+        ? widget.block.helpForStep(widget.stepId)
+        : widget.block.hintForStep(widget.stepId);
+    return (text != null && text.isNotEmpty)
+        ? text
+        : AppStrings.mentorSheetNoHelp;
   }
 
   void _onClear() => Navigator.of(context).pop();

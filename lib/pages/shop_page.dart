@@ -51,7 +51,10 @@ class _ShopPageState extends ConsumerState<ShopPage> {
     AvatarSlot.torso,
   ];
 
-  int _selectedTab = 0;
+  /// Held as the slot, not its index: which tabs exist follows the catalog,
+  /// so an index would land on another slot once a tab appeared before it.
+  /// Null until the user picks one, which means the first tab.
+  AvatarSlot? _selectedSlot;
 
   @override
   Widget build(BuildContext context) {
@@ -131,10 +134,6 @@ class _ShopPageState extends ConsumerState<ShopPage> {
           const SizedBox(height: 8),
           // Wide layouts get the title from DetailShell's top bar instead.
           if (showHeader) _buildHeader(context),
-          // Only worth saying when the cache is actually all there is. With a
-          // catalog on screen the user can shop normally, and a banner over a
-          // working screen is noise.
-          if (state.fromCache && state.catalog.isEmpty) _buildOfflineNotice(),
           const SizedBox(height: 16),
           _buildAvatarPreview(state),
           const SizedBox(height: 24),
@@ -196,8 +195,6 @@ class _ShopPageState extends ConsumerState<ShopPage> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          if (state.fromCache && state.catalog.isEmpty)
-                            _buildOfflineNotice(),
                           // Labels sit on the wash, so they have to clear its
                           // darkest point, not the white it starts from.
                           _buildItemsSection(
@@ -253,9 +250,11 @@ class _ShopPageState extends ConsumerState<ShopPage> {
     );
   }
 
-  Widget _buildOfflineNotice() {
+  /// The catalog never arrived: the server could not be reached and the
+  /// device holds nothing beyond the starting outfit.
+  Widget _buildLoadFailedNotice() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -270,7 +269,7 @@ class _ShopPageState extends ConsumerState<ShopPage> {
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                AppStrings.shopOfflineNotice,
+                AppStrings.shopLoadFailed,
                 style: AppTextStyles.meta(color: AppColors.primaryDark80),
               ),
             ),
@@ -307,8 +306,9 @@ class _ShopPageState extends ConsumerState<ShopPage> {
   // ── Items ───────────────────────────────────────────────────
 
   Widget _buildItemsSection(AvatarState state, {required Color backdrop}) {
-    final slot = _tabs[_selectedTab];
-    final items = state.itemsForSlot(slot);
+    // Oči, Pusa and Trup held nothing but the default piece — a tab with
+    // nothing to change or acquire (BR-K6C4ST).
+    final tabs = _tabs.where(state.offersChoiceIn).toList(growable: false);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -319,23 +319,50 @@ class _ShopPageState extends ConsumerState<ShopPage> {
               style: AppTextStyles.heading3()),
         ),
         const SizedBox(height: 16),
-        FilterChipRow(
-          labels: [for (final s in _tabs) s.label],
-          selectedIndex: _selectedTab,
-          onSelected: (i) => setState(() => _selectedTab = i),
-        ),
-        const SizedBox(height: 16),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: items.isEmpty
-              ? Text(
-                  AppStrings.shopEmptySlot,
-                  style: AppTextStyles.meta(color: AppColors.primaryDark80),
-                )
-              : _buildGrid(context, state, items, backdrop),
-        ),
+        if (tabs.isEmpty && state.fromCache)
+          // Only the default outfit is known because the catalog never
+          // arrived — a first launch offline, or an API that is down. Saying
+          // "nothing here yet" hid that failure behind what read as an empty
+          // or endlessly loading shop, with no way to try again (BR-QFW7WF).
+          // With a saved catalog on screen the user can shop normally, so a
+          // notice there would only be noise.
+          _buildLoadFailedNotice()
+        else if (tabs.isEmpty)
+          // The server's catalog really has nothing beyond the defaults.
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Text(
+              AppStrings.shopEmptySlot,
+              style: AppTextStyles.meta(color: AppColors.primaryDark80),
+            ),
+          )
+        else
+          ..._buildTabbedItems(state, tabs, backdrop),
       ],
     );
+  }
+
+  List<Widget> _buildTabbedItems(
+    AvatarState state,
+    List<AvatarSlot> tabs,
+    Color backdrop,
+  ) {
+    // A chosen slot that lost its tab to a catalog refresh falls back to the
+    // first one rather than to an empty grid.
+    final slot = tabs.contains(_selectedSlot) ? _selectedSlot! : tabs.first;
+
+    return [
+      FilterChipRow(
+        labels: [for (final s in tabs) s.label],
+        selectedIndex: tabs.indexOf(slot),
+        onSelected: (i) => setState(() => _selectedSlot = tabs[i]),
+      ),
+      const SizedBox(height: 16),
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: _buildGrid(context, state, state.itemsForSlot(slot), backdrop),
+      ),
+    ];
   }
 
   /// Item grid sized from the available width.

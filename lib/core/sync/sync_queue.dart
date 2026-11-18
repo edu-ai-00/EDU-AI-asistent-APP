@@ -146,6 +146,19 @@ class SyncQueue {
     await _db.removeSyncQueueEntry(id);
   }
 
+  /// Mark [op] as synced, unless its entry changed while it was being sent.
+  ///
+  /// [enqueue] merges a new change into an entry still waiting in the queue,
+  /// and the entry being sent still waits until its request returns. Deleting
+  /// it by id then threw the merged change away: a finished quiz whose last
+  /// answer was still on the wire never reached the server (BR-MKFPU6).
+  /// Returns false when the entry no longer holds what was sent; a changed
+  /// entry stays queued for the next push.
+  Future<bool> markSyncedIfUnchanged(SyncQueueTableData op) async {
+    final removed = await _db.removeSyncQueueEntryIfPayload(op.id, op.payload);
+    return removed > 0;
+  }
+
   /// Mark an operation as failed and schedule retry.
   Future<void> markFailed(int id, String error) async {
     final operations = await _db.getPendingSyncOperations(limit: 1000);

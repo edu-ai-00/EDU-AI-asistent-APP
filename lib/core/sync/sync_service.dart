@@ -9,12 +9,12 @@ import '../connectivity/connectivity_service.dart';
 import '../database/app_database.dart';
 import '../network/api_client.dart';
 import '../network/api_endpoints.dart';
+import '../util/device_kind.dart';
 import '../../data/datasources/local/chat_local_datasource.dart';
 import '../../data/datasources/remote/chat_remote_datasource.dart';
 import '../../data/repositories/gpf_label_repository.dart';
 import '../../data/repositories/chat_repository.dart';
 import '../../data/repositories/practice_repository.dart';
-import '../../models/course_model.dart';
 import 'sync_queue.dart';
 import 'sync_status.dart';
 import 'package:eduai/core/util/silent_log.dart';
@@ -221,9 +221,25 @@ class SyncService {
   @visibleForTesting
   Future<void> debugPullUserCourseUpdates() => _pullUserCourseUpdates();
 
+  /// Test-only hook for the push half of a sync (BR-MKFPU6 — a change merged
+  /// into a queue entry while that entry is on the wire must still be sent).
+  @visibleForTesting
+  Future<void> debugPushChanges() => _pushChanges();
+
   /// Test-only hook for the task calibration pull (BR-697NCA).
   @visibleForTesting
   Future<void> debugPullBlockStats() => _pullBlockStats();
+
+  /// Test-only hook for the catalog pull (BR-6CXZH5 — the `since` cursor
+  /// must leave the device as UTC, never as offset-less local time).
+  @visibleForTesting
+  Future<void> debugPullCourseUpdates() => _pullCourseUpdates();
+
+  /// Test-only hook for the practice-card seeding step (BR-B5QBBS — only
+  /// lessons the student finished may seed their practice blocks).
+  @visibleForTesting
+  Future<void> debugSeedPracticeCards(String userId) =>
+      _seedPracticeCards(userId);
 
   /// Test-only hook that pushes a single queued bookmark operation, so the
   /// wire payload can be asserted on (BR-952UKZ — the course reference must
@@ -252,16 +268,7 @@ class SyncService {
     final rows = await _db.getUnsyncedWorkHeartbeats();
     if (rows.isEmpty) return;
 
-    final payload = {
-      'heartbeats': rows
-          .map((r) => {
-                'client_uuid': r.clientUuid,
-                'course_id': r.courseId,
-                if (r.lessonId != null) 'lesson_id': r.lessonId,
-                'occurred_at': r.occurredAt.toUtc().toIso8601String(),
-              })
-          .toList(),
-    };
+    final payload = workHeartbeatsPayload(rows, DeviceKind.current());
 
     try {
       final result = await _apiClient.post<Map<String, dynamic>>(
@@ -276,6 +283,29 @@ class SyncService {
     }
   }
 
+  /// Request body for the heartbeat flush. The batch is stamped with the
+  /// device sending it: the local table only ever holds this device's own
+  /// heartbeats (it is wiped with the rest of the user data on logout), so
+  /// every row in it was recorded here (BR-Y2TJ74).
+  @visibleForTesting
+  static Map<String, dynamic> workHeartbeatsPayload(
+    List<WorkHeartbeatsTableData> rows,
+    DeviceKind device,
+  ) {
+    return {
+      'platform': device.platform,
+      if (device.type != null) 'device_type': device.type,
+      'heartbeats': rows
+          .map((r) => {
+                'client_uuid': r.clientUuid,
+                'course_id': r.courseId,
+                if (r.lessonId != null) 'lesson_id': r.lessonId,
+                'occurred_at': r.occurredAt.toUtc().toIso8601String(),
+              })
+          .toList(),
+    };
+  }
+
   // ═══════════════════════════════════════════════════════════════════════════
   // Practice cards (FSRS) — bidirectional sync (BR-WR4C8P)
   // ═══════════════════════════════════════════════════════════════════════════
@@ -288,8 +318,8 @@ class SyncService {
   /// account's full set. This runs a three-step reconciliation:
   ///   1. Pull the account's cards from the server (server wins only over
   ///      already-synced local rows; locally-pending rows are protected).
-  ///   2. Seed cards for every default_practice block of the user's enrolled
-  ///      courses, so the full admin-configured set is present.
+  ///   2. Seed cards for the default_practice blocks of every lesson the user
+  ///      finished in an enrolled course, so the account's set is present.
   ///   3. Push all pending local cards in one bulk upsert.
   ///
   /// Self-contained and best-effort: any failure is logged and swallowed so it
@@ -399,9 +429,10 @@ class SyncService {
     }
   }
 
-  /// Seed cards for every default_practice block of the user's enrolled
-  /// courses whose content is available locally. New cards are marked pending
-  /// and pushed by [_pushPracticeCards] in the same cycle.
+  /// Seed cards for the default_practice blocks of every lesson the user has
+  /// finished in an enrolled course whose content is available locally — not
+  /// of lessons in progress or never opened (BR-B5QBBS). New cards are marked
+  /// pending and pushed by [_pushPracticeCards] in the same cycle.
   Future<void> _seedPracticeCards(String userId) async {
     final enrollments = await _db.getUserCourses(userId);
     if (enrollments.isEmpty) return;
@@ -415,8 +446,8 @@ class SyncService {
       if (row == null) continue;
       if (!seededLocalIds.add(row.id)) continue;
       try {
-        final data = jsonDecode(row.data) as Map<String, dynamic>;
-        final course = Course.fromJsonData(id: row.id, data: data);
+        final course = PracticeRepository.courseWithProgress(row, enrollment);
+        if (course == null) continue;
         await repo.seedCardsFromCourse(userId: userId, course: course);
       } catch (e, st) {
         silentLog('sync:seed_practice_cards', e, st);
@@ -528,7 +559,17 @@ class SyncService {
         try {
           final success = await _processOperation(op);
           if (success) {
-            await _syncQueue.markSynced(op.id);
+            final sent = await _syncQueue.markSyncedIfUnchanged(op);
+            // A newer change was merged into the entry while this one was on
+            // the wire (BR-MKFPU6). The handler has just flagged the record
+            // synced; flag it pending again so the pull cannot overwrite the
+            // newer local state before the entry goes out.
+            if (!sent && op.tableName_ == 'user_courses') {
+              await _db.updateUserCourseSyncFields(
+                id: op.recordId,
+                syncStatus: SyncStatus.pending.toInt(),
+              );
+            }
           } else {
             // Non-exception failure (e.g. 422) — mark as failed so it
             // doesn't retry endlessly in the same sync cycle
@@ -1188,11 +1229,13 @@ class SyncService {
       }
     }
 
-    // Fetch updates from server.
+    // Fetch updates from server. Drift reads the column back as local time;
+    // without toUtc() the cursor leaves without an offset and the API (UTC)
+    // reads it 1–2 h late in Czechia (BR-6CXZH5).
     final result = await _apiClient.get<Map<String, dynamic>>(
       ApiEndpoints.coursesCheckUpdates,
       queryParameters: lastUpdate != null
-          ? {'since': lastUpdate.toIso8601String()}
+          ? {'since': lastUpdate.toUtc().toIso8601String()}
           : null,
     );
 

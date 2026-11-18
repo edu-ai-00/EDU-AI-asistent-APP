@@ -117,6 +117,7 @@ Future<ClassroomJoinFlowResult> tryJoinClassroomByCode(
   }
 
   final service = ref.read(classroomJoinServiceProvider);
+  final sync = ref.read(syncServiceProvider);
 
   final lookup = await service.lookup(code);
   if (lookup.isFailure || lookup.data == null) {
@@ -167,6 +168,13 @@ Future<ClassroomJoinFlowResult> tryJoinClassroomByCode(
       message: joined.error,
     );
   }
+
+  // The server enrolled the account in the class's courses as part of the
+  // join (a class code enrolls directly, a student code brings the
+  // placeholder's enrollments along). Pull them now — otherwise Kurzy stays
+  // as it was until the next periodic sync, up to 15 minutes later
+  // (BR-5JBZX8). A sync already running re-runs once it finishes.
+  sync.sync();
 
   if (context.mounted) {
     showClassroomJoinedSnackBar(context, joined.data!.classroom);

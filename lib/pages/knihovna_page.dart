@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/providers/core_providers.dart';
+import '../core/providers/navigation_providers.dart';
 import '../core/services/course_enroll_service.dart';
 import '../core/theme/app_theme.dart';
 import '../core/util/classroom_join_flow.dart';
@@ -211,6 +212,8 @@ class _KnihovnaPageState extends ConsumerState<KnihovnaPage> {
     if (user == null) return;
 
     final userCourses = await db.getUserCourses(user.id);
+    // The user may have left the library while the read ran (BR-M32MT5).
+    if (!mounted) return;
     setState(() {
       _downloadedVersions.clear();
       _courseProgress.clear();
@@ -347,7 +350,7 @@ class _KnihovnaPageState extends ConsumerState<KnihovnaPage> {
     final courseRepo = ref.read(courseRepositoryProvider);
     final user = await db.getActiveUser();
 
-    if (user == null) return;
+    if (user == null || !mounted) return;
 
     setState(() {
       _updatingCourses.add(course.id);
@@ -451,6 +454,7 @@ class _KnihovnaPageState extends ConsumerState<KnihovnaPage> {
       isCompleted: userCourse?.status == 'completed',
     );
 
+    if (!mounted) return;
     await Navigator.of(context).push(
       shellPageRoute(
       context,
@@ -476,6 +480,14 @@ class _KnihovnaPageState extends ConsumerState<KnihovnaPage> {
     // to true as soon as *anything* is pushed — including this page's own code
     // dialog — and the page would then wrap itself in a second sidebar.
     final isPushed = !(ModalRoute.of(context)?.isFirst ?? true);
+
+    // The shell's "+" tapped again while this tab is on display (BR-RRSCCK).
+    // Only the tab copy answers: a pushed copy covers the shell's navigation,
+    // and its own sidebar switches tabs rather than asking for the code.
+    ref.listen<int>(libraryCodeDialogRequestProvider, (_, _) {
+      if (!isPushed) _openCodeDialog();
+    });
+
     if (isPushed && context.widthClass != WidthClass.compact) {
       return DetailShell(
         backLabel: AppStrings.libraryTitle,
@@ -1118,51 +1130,54 @@ class _KnihovnaPageState extends ConsumerState<KnihovnaPage> {
             ],
             const SizedBox(height: 12),
             // Bottom row: Meta info and download button
-            Row(
-              children: [
+            CourseCardMetaRow(
+              meta: [
                 // Lesson count
-                Icon(
+                _buildMetaItem(
                   Icons.copy_rounded,
-                  size: 16,
-                  color: AppColors.primaryDark48,
-                ),
-                const SizedBox(width: 4),
-                Text(
                   AppStrings.lessonsCount(lessonCount),
-                  style: AppTextStyles.meta(color: AppColors.primaryDark64),
                 ),
-                const SizedBox(width: 12),
                 // Duration
-                Icon(
+                _buildMetaItem(
                   Icons.access_time,
-                  size: 16,
-                  color: AppColors.primaryDark48,
-                ),
-                const SizedBox(width: 4),
-                Text(
                   AppStrings.durationSmart(totalMinutes),
-                  style: AppTextStyles.meta(color: AppColors.primaryDark64),
                 ),
-                const SizedBox(width: 12),
                 // Version
                 Text(
                   'v${course.version}',
                   style: AppTextStyles.meta(color: AppColors.primaryDark48),
                 ),
-                const Spacer(),
-                // Download/Update/Added button
-                _buildActionButton(
-                  course,
-                  isDownloaded: isDownloaded,
-                  hasUpdate: hasUpdate,
-                  isDownloading: isDownloading,
-                  isUpdating: isUpdating,
-                ),
               ],
+              // Download/Update/Added button
+              action: _buildActionButton(
+                course,
+                isDownloaded: isDownloaded,
+                hasUpdate: hasUpdate,
+                isDownloading: isDownloading,
+                isUpdating: isUpdating,
+              ),
             ),
           ],
         ),
       ),
+    );
+  }
+
+  /// One icon + label piece of the list card's meta line. The label may wrap
+  /// only when the piece alone is wider than the room beside the button.
+  Widget _buildMetaItem(IconData icon, String label) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 16, color: AppColors.primaryDark48),
+        const SizedBox(width: 4),
+        Flexible(
+          child: Text(
+            label,
+            style: AppTextStyles.meta(color: AppColors.primaryDark64),
+          ),
+        ),
+      ],
     );
   }
 

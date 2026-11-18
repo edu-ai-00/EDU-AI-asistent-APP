@@ -213,6 +213,18 @@ class AvatarState {
   List<AvatarItem> itemsForSlot(AvatarSlot slot) =>
       catalog.where((i) => i.slot == slot).toList(growable: false);
 
+  /// Whether the shop has anything for the user to do in [slot].
+  ///
+  /// An empty slot has nothing, and neither does one holding only its default
+  /// item: that is always worn, cannot be taken off, and comes back on its own
+  /// after a conflicting slot is cleared. A single item that is not the
+  /// default still counts — acquiring it and taking it off again is a choice
+  /// (BR-K6C4ST).
+  bool offersChoiceIn(AvatarSlot slot) {
+    final items = itemsForSlot(slot);
+    return items.length > 1 || items.any((i) => !i.isDefault);
+  }
+
   /// The worn items, in paint order, skipping anything without artwork.
   ///
   /// A missing item is dropped rather than substituted: drawing someone else's

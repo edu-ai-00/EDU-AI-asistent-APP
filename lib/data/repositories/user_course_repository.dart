@@ -39,6 +39,25 @@ extension UserCourseStatusExtension on UserCourseStatus {
   }
 }
 
+/// The status a finished course quiz moves the enrollment to, or null to
+/// leave it as it is.
+///
+/// An `only_quiz` course is finished once its quiz is. The entry quiz of a
+/// `starts_with_quiz` course is the first step of the course, so finishing it
+/// starts the course: it used to stay "downloaded" and sat under "Nezahájené"
+/// with its first lesson already open (BR-MKFPU6).
+UserCourseStatus? statusAfterCourseQuiz({
+  required Map<String, dynamic>? courseData,
+  required String currentStatus,
+}) {
+  if (courseData?['only_quiz'] == true) return UserCourseStatus.completed;
+  if (courseData?['starts_with_quiz'] == true &&
+      currentStatus == UserCourseStatus.downloaded.toApiString()) {
+    return UserCourseStatus.inProgress;
+  }
+  return null;
+}
+
 /// User course model for use in the UI layer.
 class UserCourse {
   final String id;

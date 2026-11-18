@@ -29,3 +29,12 @@ final pendingChatMentorSlugProvider = StateProvider<String?>((ref) => null);
 /// screen and the code waits here until `MainScreen` is up with a real
 /// account — a guest is asked to log in first, and the code survives that.
 final pendingClassroomJoinCodeProvider = StateProvider<String?>((ref) => null);
+
+/// Holds the `deep_link` of a tapped push notification until `MainScreen` can
+/// open it (see `openNotificationLink`).
+///
+/// A slot rather than a stream for the same reason as the others: the push
+/// that launched the app is read while the session is still being restored,
+/// and a background tap can land while a page is being popped. `MainScreen`
+/// drains it on mount and whenever it changes.
+final pendingNotificationLinkProvider = StateProvider<String?>((ref) => null);

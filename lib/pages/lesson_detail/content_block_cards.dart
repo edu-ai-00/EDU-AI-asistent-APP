@@ -5,6 +5,7 @@ import '../../core/strings/app_strings.dart';
 import '../../core/utils/image_url.dart';
 import '../../models/course_model.dart';
 import '../../widgets/lesson_image.dart';
+import '../../widgets/lesson_text_style.dart';
 import '../../widgets/markdown_latex_widget.dart';
 import 'card_container.dart';
 import 'network_image.dart';
@@ -38,39 +39,12 @@ class LessonContentTextCard extends StatelessWidget {
           Html(
             data: resolveHtmlImageUrls(step.htmlContent!),
             extensions: lessonHtmlImageExtensions(),
-            style: {
-              'body': Style(
-                margin: Margins.zero,
-                padding: HtmlPaddings.zero,
-                fontSize: FontSize(15),
-                fontWeight: FontWeight.w500,
-                color: AppColors.primaryDark88,
-                lineHeight: const LineHeight(1.5),
-                fontFamily: 'Poppins',
-              ),
-              'p': Style(margin: Margins.only(bottom: 12)),
-              'h3': Style(
-                fontSize: FontSize(18),
-                fontWeight: FontWeight.w700,
-                color: AppColors.primaryDark,
-                margin: Margins.only(bottom: 12, top: 8),
-              ),
-              'strong': Style(
-                fontWeight: FontWeight.w700,
-                color: AppColors.primaryDark,
-              ),
-              'em': Style(fontStyle: FontStyle.italic),
-              'ul': Style(margin: Margins.only(bottom: 12)),
-              'li': Style(margin: Margins.only(bottom: 6)),
-            },
+            style: lessonHtmlStyle(),
           )
         else
           Text(
             step.displayText,
-            style: AppTextStyles.body(
-              color: AppColors.primaryDark.withValues(alpha: 0.72),
-              height: 1.33,
-            ),
+            style: lessonBodyStyle(AppColors.primaryDark),
           ),
         if (hasImage) ...[
           const SizedBox(height: 16),

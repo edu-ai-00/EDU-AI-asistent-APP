@@ -8,6 +8,10 @@
 // to log in without losing the code, and shows every refusal — "Už jsi ve
 // třídě X." above all — as a snackbar, since a link has no input to show it
 // under.
+//
+// BR-5JBZX8: a successful join starts a sync, so the enrollments the server
+// just created for the class's courses reach the Kurzy list right away
+// instead of on the next 15-minute periodic sync.
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -21,6 +25,7 @@ import 'package:eduai/core/network/api_client.dart';
 import 'package:eduai/core/providers/core_providers.dart';
 import 'package:eduai/core/services/classroom_join_service.dart';
 import 'package:eduai/core/strings/app_strings.dart';
+import 'package:eduai/core/sync/sync_service.dart';
 import 'package:eduai/core/util/classroom_join_flow.dart';
 import 'package:eduai/routing/deep_link.dart';
 
@@ -65,6 +70,17 @@ class _FakeJoin implements ClassroomJoinService {
   dynamic noSuchMethod(Invocation i) => super.noSuchMethod(i);
 }
 
+/// Counts the syncs the join flow asks for.
+class _CountingSync implements SyncService {
+  int calls = 0;
+
+  @override
+  Future<void> sync() async => calls++;
+
+  @override
+  dynamic noSuchMethod(Invocation i) => null;
+}
+
 class _Minor extends MinorModeNotifier {
   _Minor() {
     state = true;
@@ -93,6 +109,7 @@ Future<ProviderContainer> _pump(
   WidgetTester tester, {
   required _FakeJoin join,
   required Future<void> Function(BuildContext, WidgetRef) action,
+  _CountingSync? sync,
   Stream<UsersTableData?>? user,
   bool minor = false,
   String? parkedCode,
@@ -100,6 +117,7 @@ Future<ProviderContainer> _pump(
   final container = ProviderContainer(overrides: [
     classroomJoinServiceProvider.overrideWithValue(join),
     connectivityServiceProvider.overrideWithValue(_Conn()),
+    syncServiceProvider.overrideWithValue(sync ?? _CountingSync()),
     activeUserStreamProvider.overrideWith(
       (ref) => user ?? Stream.value(_user(guest: false)),
     ),
@@ -148,10 +166,15 @@ Future<void> _frames(WidgetTester tester) async {
 
 void main() {
   group('Upravit profil code dialog', () {
-    Future<void> openDialog(WidgetTester tester, _FakeJoin join) async {
+    Future<void> openDialog(
+      WidgetTester tester,
+      _FakeJoin join, {
+      _CountingSync? sync,
+    }) async {
       await _pump(
         tester,
         join: join,
+        sync: sync,
         action: (context, ref) => showClassroomCodeDialog(context, ref),
       );
       await _go(tester);
@@ -167,7 +190,8 @@ void main() {
 
     testWidgets('a four-character code asks, then joins', (tester) async {
       final join = _FakeJoin.found();
-      await openDialog(tester, join);
+      final sync = _CountingSync();
+      await openDialog(tester, join, sync: sync);
 
       await tester.enterText(find.byType(TextField), 'ab12');
       await _frames(tester);
@@ -182,6 +206,8 @@ void main() {
       expect(find.text(AppStrings.classroomJoinSuccess('5.A')), findsOneWidget);
       // The code dialog closed on success.
       expect(find.text(AppStrings.classroomJoinClassCodeHint), findsNothing);
+      expect(sync.calls, 1,
+          reason: "pulls the class's courses into Kurzy now (BR-5JBZX8)");
     });
 
     testWidgets('switches to the six-box student code and back',
@@ -221,22 +247,26 @@ void main() {
       final join = _FakeJoin(
         ApiResult.failure('Už jsi ve třídě 5.A.', statusCode: 409),
       );
-      await openDialog(tester, join);
+      final sync = _CountingSync();
+      await openDialog(tester, join, sync: sync);
 
       await tester.enterText(find.byType(TextField), 'AB12');
       await _frames(tester);
 
       expect(find.text('Už jsi ve třídě 5.A.'), findsOneWidget);
       expect(join.joins, isEmpty);
+      expect(sync.calls, 0);
     });
   });
 
   group('/join/:code deep link', () {
     testWidgets('a signed-in student is asked, then joined', (tester) async {
       final join = _FakeJoin.found();
+      final sync = _CountingSync();
       final container = await _pump(
         tester,
         join: join,
+        sync: sync,
         action: joinClassroomFromDeepLink,
         parkedCode: 'AB12',
       );
@@ -250,6 +280,28 @@ void main() {
       expect(find.text(AppStrings.classroomJoinSuccess('5.A')), findsOneWidget);
       expect(container.read(pendingClassroomJoinCodeProvider), isNull,
           reason: 'consumed once, so it cannot fire again on a rebuild');
+      expect(sync.calls, 1,
+          reason: "pulls the class's courses into Kurzy now (BR-5JBZX8)");
+    });
+
+    testWidgets('answering "Ne" joins nothing and syncs nothing',
+        (tester) async {
+      final join = _FakeJoin.found();
+      final sync = _CountingSync();
+      await _pump(
+        tester,
+        join: join,
+        sync: sync,
+        action: joinClassroomFromDeepLink,
+        parkedCode: 'AB12',
+      );
+      await _go(tester);
+
+      await tester.tap(find.text(AppStrings.classroomJoinNo));
+      await tester.pumpAndSettle();
+
+      expect(join.joins, isEmpty);
+      expect(sync.calls, 0);
     });
 
     testWidgets('an existing member gets the "already in the class" notice',

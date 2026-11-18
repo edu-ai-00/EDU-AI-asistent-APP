@@ -136,6 +136,8 @@ class DetailShell extends ConsumerWidget {
             notices: expanded
                 ? ShellBanners(
                     onLogout: () => requestIntent(ShellIntent.logout),
+                    onRegisterTap: () =>
+                        requestIntent(ShellIntent.openGuestLogin),
                   )
                 : null,
           ),
@@ -149,6 +151,8 @@ class DetailShell extends ConsumerWidget {
                   if (!expanded)
                     ShellBanners(
                       onLogout: () => requestIntent(ShellIntent.logout),
+                      onRegisterTap: () =>
+                          requestIntent(ShellIntent.openGuestLogin),
                     ),
                   DesktopTopBar(
                     // With no back link the bar falls through to its

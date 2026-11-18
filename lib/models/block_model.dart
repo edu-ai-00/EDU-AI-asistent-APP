@@ -1743,6 +1743,14 @@ class ContentBlock {
     return help != null && help.isNotEmpty;
   }
 
+  /// Whether the "?" has anything to open for [stepId].
+  ///
+  /// An author may fill in only the second stage: a step carrying `help` and no
+  /// `hint` still has something to show, so the button must appear and the
+  /// mentor sheet opens straight at the help text (BR-3FE9U7).
+  bool hasHintOrHelpForStep(String? stepId) =>
+      hasHintForStep(stepId) || hasHelpForStep(stepId);
+
   /// Get hint for the current block/step (if available)
   String? get currentHint => hintForStep(currentStep?.stepId);
 
@@ -1754,6 +1762,9 @@ class ContentBlock {
 
   /// Check if block has help
   bool get hasHelp => hasHelpForStep(currentStep?.stepId);
+
+  /// Check if block has a hint or help — the gate for the "?" button
+  bool get hasHintOrHelp => hasHintOrHelpForStep(currentStep?.stepId);
 
   /// Get the question configuration (for question blocks)
   AtomicQuestion? get question => atomicQuestion;

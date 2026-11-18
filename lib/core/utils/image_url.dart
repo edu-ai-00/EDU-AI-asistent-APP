@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart' show kIsWeb;
+import '../media/lesson_image_cache.dart';
 import '../network/api_endpoints.dart';
 
 /// On Flutter web, rewrite external image URLs to go through
@@ -22,9 +23,11 @@ String proxyImageUrl(String url) {
 
 /// Rewrite all external image URLs inside an HTML string so that
 /// flutter_html's <img> tags also go through the API proxy.
-/// Only active on web — returns the input unchanged on native.
+/// Only active on web without a [LessonImageCache] — wherever there is one,
+/// `lessonHtmlImageExtensions` draws the pictures through it and needs their
+/// own URLs, which are what the cache keeps them under (BR-7XZXZD).
 String resolveHtmlImageUrls(String html) {
-  if (!kIsWeb) return html;
+  if (!kIsWeb || LessonImageCache.instance.isSupported) return html;
   final prefix = '${ApiEndpoints.baseUrl}${ApiEndpoints.proxyImage}?url=';
   return html.replaceAllMapped(
     RegExp('(src\\s*=\\s*["\'])(https?://[^"\']+)(["\'])'),

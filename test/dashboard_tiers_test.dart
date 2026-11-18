@@ -30,10 +30,9 @@ void main() {
       expect(DashboardTiers.showsShop(101), isTrue);
     });
 
-    test('the entrance-exam banner points at Cermatík above 100 XP', () {
-      expect(DashboardTiers.showsCermatik(100), isFalse);
-      expect(DashboardTiers.showsCermatik(101), isTrue);
-    });
+    // The entrance-exam banner's own threshold left this ladder in
+    // BR-SAWX2U: it is a dashboard_banners row now, covered by
+    // dashboard_banner_test.dart.
   });
 
   group('greeting ladder', () {
@@ -65,7 +64,6 @@ void main() {
     expect(DashboardTiers.showsPractice(xp), isTrue);
     expect(DashboardTiers.showsPromoReward(xp), isTrue);
     expect(DashboardTiers.showsShop(xp), isTrue);
-    expect(DashboardTiers.showsCermatik(xp), isTrue);
     expect(DashboardTiers.showsStatEncouragement(xp), isFalse);
     expect(DashboardTiers.greetingSubtitle(xp), AppStrings.dashGreetingProud);
   });
@@ -75,7 +73,6 @@ void main() {
     expect(DashboardTiers.showsPractice(xp), isFalse);
     expect(DashboardTiers.showsPromoReward(xp), isFalse);
     expect(DashboardTiers.showsShop(xp), isFalse);
-    expect(DashboardTiers.showsCermatik(xp), isFalse);
     expect(DashboardTiers.showsStatEncouragement(xp), isTrue);
   });
 }

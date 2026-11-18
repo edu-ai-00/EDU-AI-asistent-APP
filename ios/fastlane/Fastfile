@@ -1,0 +1,52 @@
+# Sends a release that Xcode Cloud has uploaded to App Store Connect to App
+# Review, with a manual release once Apple approves it. The App store build
+# workflow runs it after each push to release/app (docs/store-builds.md):
+#
+#   VERSION=1.2.3 WHATS_NEW="…" fastlane ios submit_review
+#
+# Needs an App Store Connect API key: ASC_KEY_ID, ASC_ISSUER_ID and the .p8
+# file's contents in ASC_KEY_P8.
+
+BUNDLE_ID = "com.eduai.eduaiapp"
+
+default_platform(:ios)
+
+platform :ios do
+  lane :submit_review do
+    app_store_connect_api_key(
+      key_id: ENV.fetch("ASC_KEY_ID"),
+      issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+      key_content: ENV.fetch("ASC_KEY_P8")
+    )
+    version = ENV.fetch("VERSION")
+    common = {
+      app_identifier: BUNDLE_ID,
+      force: true,
+      skip_binary_upload: true,
+      skip_screenshots: true,
+      skip_metadata: true,
+      run_precheck_before_submit: false
+    }
+
+    # A newer release replaces one still waiting for review, so take that one
+    # back first. On its own: deliver renames the version before it rejects,
+    # and App Store Connect refuses a rename during review.
+    deliver(**common, skip_app_version_update: true, reject_if_possible: true)
+
+    # Create version X.Y.Z, or rename the version being prepared to it.
+    deliver(**common, app_version: version)
+
+    # deliver sets these only together with the rest of the metadata, which
+    # lives in App Store Connect, not here.
+    app = Spaceship::ConnectAPI::App.find(BUNDLE_ID)
+    edit = app.get_edit_app_store_version(platform: Spaceship::ConnectAPI::Platform::IOS)
+    edit.update(attributes: { release_type: Spaceship::ConnectAPI::AppStoreVersion::ReleaseType::MANUAL })
+    edit.get_app_store_version_localizations.each do |localization|
+      localization.update(attributes: { whats_new: ENV.fetch("WHATS_NEW") })
+    end
+
+    # Without a build_number deliver waits until App Store Connect has
+    # processed the latest build of the version, then submits that one.
+    deliver(**common, app_version: version, submit_for_review: true)
+  end
+end

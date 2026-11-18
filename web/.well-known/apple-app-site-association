@@ -1,0 +1,15 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["24ZTV92G3K.com.eduai.eduaiapp"],
+        "components": [
+          { "/": "/pin/*" },
+          { "/": "/course/*" },
+          { "/": "/join/*" },
+          { "/": "/chat/*" }
+        ]
+      }
+    ]
+  }
+}

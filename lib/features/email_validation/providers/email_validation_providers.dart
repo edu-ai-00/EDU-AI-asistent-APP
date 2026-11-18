@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/consent/minor_mode.dart';
 import '../../../core/database/app_database.dart';
+import '../../../core/monitoring/sentry_user.dart';
 import '../../../core/providers/bookmark_provider.dart';
 import '../../../core/providers/core_providers.dart';
 import '../../../core/providers/practice_providers.dart';
@@ -206,6 +207,7 @@ class EmailVerificationNotifier extends StateNotifier<EmailVerificationState> {
     state = EmailVerificationLoading(AppStrings.authVerifyingCode);
 
     final shared = _ref.read(sessionMetaProvider).pendingSharedDevice;
+    final sentryEpoch = sentryUserEpoch;
     final result = await _repository.verifyCode(
       _currentEmail!,
       code,
@@ -247,6 +249,7 @@ class EmailVerificationNotifier extends StateNotifier<EmailVerificationState> {
           final userResponse = await apiClient.get('/api/user');
           if (userResponse.statusCode == 200 && userResponse.data != null) {
             final userData = userResponse.data as Map<String, dynamic>;
+            identifySentryUser(userData, epoch: sentryEpoch);
             final serverName = userData['name'] as String? ?? '';
             final serverAvatarIndex = userData['avatar_index'] as int? ?? 0;
             final serverSubjects = userData['selected_subjects'];
@@ -441,6 +444,7 @@ class EmailVerificationNotifier extends StateNotifier<EmailVerificationState> {
 
     // Register/sync with server
     final shared = _ref.read(sessionMetaProvider).pendingSharedDevice;
+    final sentryEpoch = sentryUserEpoch;
     final registerResult = await _repository.registerVerified(
       email: activeUser.email,
       name: activeUser.name,
@@ -458,6 +462,7 @@ class EmailVerificationNotifier extends StateNotifier<EmailVerificationState> {
       await _ref.read(sessionMetaProvider).applyFromAuthResponse(
             response.sessionPayload(),
           );
+      identifySentryUser({'id': response.user.id}, epoch: sentryEpoch);
 
       // If existing user, sync data from server
       if (!response.isNewUser) {

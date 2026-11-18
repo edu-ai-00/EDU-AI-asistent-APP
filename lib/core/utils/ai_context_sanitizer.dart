@@ -6,15 +6,48 @@
 /// student's own message bubble and in the prompt (BR-KFHPAR). Three reasons
 /// that is wrong: the model cannot open links (the system prompt says so), the
 /// URL is noise in the chat, and ~90 characters of it eat into the
-/// 400-character task-content budget, truncating the actual assignment.
+/// task-content budget, truncating the actual assignment.
 ///
 /// Media collapses to a short label — `[Obrázek: náměstí]` — so the model still
 /// knows something visual is there without getting a link it can't follow.
 /// Links keep their label text, and anything left that is only a URL is
 /// dropped.
+///
+/// The same file also owns the budget the assembled context is held to; see
+/// [limitAiContext].
 library;
 
 import '../strings/app_strings.dart';
+
+/// Ceiling for the whole assembled context message.
+///
+/// The API stores it as a hidden `message_type: context` chat message and
+/// validates the field at `max:8000` (`ChatMessageController`), so anything
+/// longer is rejected with a 422 and the student gets no answer at all.
+const int kAiContextMaxChars = 8000;
+
+/// Share of that budget the task statement itself may take, leaving room for
+/// the intro line, the answer options and the hint/help text.
+///
+/// The statement used to be cut at 400 characters, which severed one task in
+/// five in a real course — including, in "Nerovnice 1", the markdown table the
+/// question is actually about (BR-SX85ED). The longest statement in that
+/// course is ~1500 characters, so this clears every real block with headroom.
+const int kAiTaskContentMaxChars = 4000;
+
+/// Trim [text] to at most [maxChars], cutting on a line boundary.
+///
+/// Course content is Block V2 markdown, so a mid-line cut can sever a table
+/// row and hand the model half a table: it then either answers without the
+/// numbers it was asked about or tells the student the assignment is
+/// incomplete (BR-SX85ED). Dropping whole lines keeps what survives readable,
+/// and the trailing marker tells the model the text goes on.
+String limitAiContext(String text, int maxChars) {
+  if (text.length <= maxChars) return text;
+  final cut = text.lastIndexOf('\n', maxChars);
+  final head = cut > 0 ? text.substring(0, cut) : text.substring(0, maxChars);
+  return '${head.trimRight()}\n...';
+}
 
 /// `![alt](url)` — must run before [_mdLink] so the `!` form is consumed first.
 final _mdImage = RegExp(r'!\[([^\]]*)\]\([^)]*\)');

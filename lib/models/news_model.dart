@@ -30,12 +30,21 @@ class NewsItem {
     );
   }
 
-  NewsItem copyWith({bool? isRead}) {
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'title': title,
+        'perex': perex,
+        if (body != null) 'body': body,
+        'published_at': publishedAt.toIso8601String(),
+        'is_read': isRead,
+      };
+
+  NewsItem copyWith({bool? isRead, String? body}) {
     return NewsItem(
       id: id,
       title: title,
       perex: perex,
-      body: body,
+      body: body ?? this.body,
       publishedAt: publishedAt,
       isRead: isRead ?? this.isRead,
     );

@@ -7,6 +7,7 @@ import '../core/theme/app_theme.dart';
 import '../core/util/markdown_link_handler.dart';
 import '../core/util/markdown_table_column_width.dart';
 import 'lesson_image.dart';
+import 'lesson_text_style.dart';
 
 /// Fallback body size, matching [AppTextStyles.body].
 const double _kDefaultBodyFontSize = 15.0;
@@ -45,6 +46,14 @@ class MarkdownLatexWidget extends ConsumerWidget {
   /// builder overrides it because purple-on-purple is unreadable.
   final Color? linkColor;
 
+  /// Also read TeX's own `\(…\)` and `\[…\]` as maths, not just dollars.
+  ///
+  /// For AI-written text only — mentor replies and open-answer feedback —
+  /// where models use both notations whatever the prompt asks (BR-4ZFY6D).
+  /// Course content leaves it off: the admin preview (remark-math) reads
+  /// dollars only, and a lesson must look the way its author saw it there.
+  final bool bracketDelimiters;
+
   const MarkdownLatexWidget({
     super.key,
     required this.content,
@@ -53,6 +62,7 @@ class MarkdownLatexWidget extends ConsumerWidget {
     this.selectable = true,
     this.onTapLink,
     this.linkColor,
+    this.bracketDelimiters = false,
   });
 
   @override
@@ -62,14 +72,22 @@ class MarkdownLatexWidget extends ConsumerWidget {
 
     // Everything below is sized off the body. When the caller supplied a style
     // its size becomes the new body size, and `sized` pulls the rest along.
+    // The default is shared with the plain and HTML branches next to every
+    // caller, so markdown in a paragraph never changes its look (BR-92JSBK).
     final baseStyle = textStyle?.copyWith(color: effectiveTextColor) ??
-        AppTextStyles.body(color: effectiveTextColor, height: 1.5);
+        lessonBodyStyle(effectiveTextColor);
     final baseFontSize = baseStyle.fontSize ?? _kDefaultBodyFontSize;
     TextStyle sized(TextStyle style) => style.copyWith(fontSize: baseFontSize);
 
+    // Pre-process: \(...\) → $...$ and \[...\] → $$...$$ where the caller
+    // opted in. Left as they are, markdown reads the backslashes as escapes
+    // and prints the bare brackets with the TeX between them.
+    final dollars =
+        bracketDelimiters ? _bracketMathToDollars(content) : content;
+
     // Pre-process: promote $\begin{...}...\end{...}$ → $$...$$ so that
     // multi-line LaTeX environments render as display math even with single $
-    final promoted = _promoteBlockEnvironments(content);
+    final promoted = _promoteBlockEnvironments(dollars);
 
     // Pre-process: any $$...$$ block alone on its own line gets isolated as
     // its own paragraph (blank lines before/after) so consecutive display
@@ -239,6 +257,44 @@ class MarkdownLatexWidget extends ConsumerWidget {
   }
 }
 
+// ─── Bracket Delimiters ──────────────────────────────────────
+
+/// `\(…\)` and `\[…\]`. Not preceded by another backslash, so a TeX line break
+/// `\\` followed by a bracket is not mistaken for an opening delimiter.
+final _inlineBrackets = RegExp(r'(?<!\\)\\\(([\s\S]+?)(?<!\\)\\\)');
+final _displayBrackets = RegExp(r'(?<!\\)\\\[([\s\S]+?)(?<!\\)\\\]');
+
+/// Fenced blocks and inline code spans, where a `\(` is code, not maths.
+final _codeSpans = RegExp(r'```[\s\S]*?```|`[^`\n]*`');
+
+/// Whether [text] holds a formula in bracket delimiters — what
+/// `looksLikeMarkdown` cannot see, as it has no dollar sign.
+bool containsBracketMath(String text) =>
+    _inlineBrackets.hasMatch(text) || _displayBrackets.hasMatch(text);
+
+/// Rewrites bracket delimiters into the dollars the inline syntaxes below
+/// match, leaving code untouched.
+String _bracketMathToDollars(String text) {
+  String convert(String prose) => prose
+      .replaceAllMapped(_displayBrackets, (m) => '\$\$${m[1]!.trim()}\$\$')
+      // Inline maths may not span lines (see _InlineLatexSyntax).
+      .replaceAllMapped(
+        _inlineBrackets,
+        (m) => '\$${m[1]!.trim().replaceAll(RegExp(r'\s*\n\s*'), ' ')}\$',
+      );
+
+  final out = StringBuffer();
+  var last = 0;
+  for (final code in _codeSpans.allMatches(text)) {
+    out
+      ..write(convert(text.substring(last, code.start)))
+      ..write(code[0]);
+    last = code.end;
+  }
+  out.write(convert(text.substring(last)));
+  return out.toString();
+}
+
 // ─── Custom Block Syntax for Blockquotes ─────────────────────
 
 /// Claims `> quote` blocks and hands their body back as *raw markdown*
@@ -406,11 +462,19 @@ class _LatexElementBuilder extends MarkdownElementBuilder {
         if (parts.length > 1) {
           return Padding(
             padding: const EdgeInsets.symmetric(vertical: 12),
-            child: Wrap(
-              crossAxisAlignment: WrapCrossAlignment.center,
-              spacing: 4,
-              runSpacing: 4,
-              children: parts.map((p) => buildMath(p)).toList(),
+            // A bare Wrap shrinks to its parts and so sits on the left, while
+            // every other display formula below is centred — one course then
+            // showed both (BR-H34ZVS). Center claims the full width, the Wrap
+            // centres itself in it and still breaks at the `=` when a long
+            // equation doesn't fit.
+            child: Center(
+              child: Wrap(
+                alignment: WrapAlignment.center,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 4,
+                runSpacing: 4,
+                children: parts.map((p) => buildMath(p)).toList(),
+              ),
             ),
           );
         }

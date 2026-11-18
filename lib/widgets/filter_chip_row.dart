@@ -7,18 +7,26 @@ class FilterChipRow extends StatelessWidget {
   final int selectedIndex;
   final Function(int) onSelected;
 
+  /// Space around the chips, inside the scrolling area.
+  final EdgeInsetsGeometry padding;
+
+  /// Lines the first chip up with a phone's 16px page gutter while letting
+  /// the row scroll edge to edge.
+  static const EdgeInsets gutterPadding = EdgeInsets.symmetric(horizontal: 16);
+
   const FilterChipRow({
     super.key,
     required this.labels,
     required this.selectedIndex,
     required this.onSelected,
+    this.padding = gutterPadding,
   });
 
   @override
   Widget build(BuildContext context) {
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
-      padding: const EdgeInsets.symmetric(horizontal: 16),
+      padding: padding,
       child: Row(
         children: [
           for (int i = 0; i < labels.length; i++) ...[

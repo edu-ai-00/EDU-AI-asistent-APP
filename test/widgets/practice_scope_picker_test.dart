@@ -17,6 +17,7 @@ import 'package:eduai/core/providers/core_providers.dart';
 import 'package:eduai/core/providers/practice_providers.dart';
 import 'package:eduai/core/services/practice_filter_store.dart';
 import 'package:eduai/core/strings/app_strings.dart';
+import 'package:eduai/core/theme/app_theme.dart';
 import 'package:eduai/models/block_model.dart';
 import 'package:eduai/pages/practice_page.dart';
 
@@ -110,6 +111,60 @@ void main() {
     expect(find.text('Soustavy'), findsOneWidget);
   });
 
+  // BR-QS4TXB: the areas were told apart from their subject only by a
+  // checkbox nudged to the right, which on the white card read as a
+  // misaligned checkbox rather than a sub-level. They now sit on a tinted
+  // panel of their own, their titles in line with the subject's.
+  testWidgets('areas sit on their own panel under the subject',
+      (tester) async {
+    await _pumpPage(tester);
+    await tester.tap(find.text('Rovnice'));
+    await tester.pumpAndSettle();
+
+    final panel = find.byKey(const ValueKey('practice-areas-row-A'));
+    expect(panel, findsOneWidget);
+    expect(
+      find.descendant(of: panel, matching: find.text('Lineární rovnice')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: panel, matching: find.text('Soustavy')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: panel, matching: find.text('Rovnice')),
+      findsNothing,
+      reason: 'the subject row itself stays on the card',
+    );
+
+    final fill = tester.widget<Material>(panel).color;
+    expect(fill, isNotNull);
+    expect(fill!.a, greaterThan(0), reason: 'the panel must be visible');
+    expect(fill, isNot(AppColors.surface));
+
+    // Every area checkbox lies inside the panel, indented from the subject's.
+    final panelRect = tester.getRect(panel);
+    final subjectBox = tester.getRect(find.byType(Checkbox).first);
+    final areaBoxes = find.descendant(
+      of: panel,
+      matching: find.byType(Checkbox),
+    );
+    expect(areaBoxes, findsNWidgets(2));
+    for (final box in areaBoxes.evaluate()) {
+      final rect = tester.getRect(find.byWidget(box.widget));
+      expect(panelRect.contains(rect.center), isTrue);
+      expect(rect.left, greaterThan(subjectBox.left));
+    }
+
+    // Area titles share the subject title's left edge.
+    final subjectTitleX = tester.getTopLeft(find.text('Rovnice')).dx;
+    expect(
+      tester.getTopLeft(find.text('Lineární rovnice')).dx,
+      subjectTitleX,
+    );
+    expect(tester.getTopLeft(find.text('Soustavy')).dx, subjectTitleX);
+  });
+
   testWidgets('with nothing selected the whole deck is in scope',
       (tester) async {
     final container = await _pumpPage(tester);
@@ -123,6 +178,9 @@ void main() {
     final container = await _pumpPage(tester);
 
     await tester.tap(find.text('Rovnice'));
+    await tester.pumpAndSettle();
+    // The expanded areas reach past the bottom of the 800×600 test view.
+    await tester.ensureVisible(find.text('Lineární rovnice'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Lineární rovnice'));
     await tester.pumpAndSettle();

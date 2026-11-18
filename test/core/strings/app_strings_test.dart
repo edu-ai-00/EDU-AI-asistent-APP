@@ -105,6 +105,65 @@ void main() {
     });
   });
 
+  // The app speaks to pupils informally (tykání), but the shared-device dialog
+  // and its error snackbar addressed them formally — "budete odhlášeni",
+  // "Chcete se odhlásit", "Zkuste to" (BR-WHE88W). English has no T–V split,
+  // so only the Czech and Slovak texts are checked.
+  group('shared-device dialog', () {
+    const keys = ['sharedDeviceDialogMessage', 'sharedDeviceConvertError'];
+
+    // Formal second-person plural forms: verbs and the plural participles
+    // that go with "vy". Matched as whole words, case-insensitively.
+    final formal = {
+      AppLocale.cs: RegExp(
+        r'(?<!\p{L})(budete|chcete|zkuste|přihlášeni|odhlášeni)(?!\p{L})',
+        caseSensitive: false,
+        unicode: true,
+      ),
+      AppLocale.sk: RegExp(
+        r'(?<!\p{L})(budete|chcete|skúste|prihlásení|odhlásení)(?!\p{L})',
+        caseSensitive: false,
+        unicode: true,
+      ),
+    };
+
+    test('addresses the pupil informally in Czech and Slovak', () {
+      for (final entry in formal.entries) {
+        for (final key in keys) {
+          final text = tables[entry.key]![key]!;
+          expect(
+            entry.value.hasMatch(text),
+            isFalse,
+            reason: '${entry.key.code}/$key still uses vykání: "$text"',
+          );
+        }
+      }
+    });
+
+    test('pins the Czech wording', () {
+      expect(
+        tables[AppLocale.cs]!['sharedDeviceDialogMessage'],
+        'Toto zařízení je označené jako sdílené — po 15 minutách nečinnosti '
+        'tě automaticky odhlásíme. Chceš se odhlásit hned, nebo zařízení '
+        'označit jako své? Pak už tě odhlašovat nebudeme.',
+      );
+      expect(
+        tables[AppLocale.cs]!['sharedDeviceConvertError'],
+        'Zařízení se nepodařilo označit jako vlastní. Zkus to prosím znovu.',
+      );
+    });
+  });
+
+  // The first nav item read "Prehled" in Czech — the háček was missing, while
+  // the page heading and the rest of the app say "Přehled" (BR-VRUMPN).
+  group('nav labels', () {
+    test('spell the dashboard item per locale', () {
+      expect(tables[AppLocale.cs]!['navPrehled'], 'Přehled');
+      expect(tables[AppLocale.sk]!['navPrehled'], 'Prehľad');
+      expect(tables[AppLocale.en]!['navPrehled'], 'Overview');
+    });
+  });
+
   group('AppLocale', () {
     test('exposes a distinct code and short label per locale', () {
       expect(

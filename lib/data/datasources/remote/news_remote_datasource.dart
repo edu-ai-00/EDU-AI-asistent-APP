@@ -2,7 +2,8 @@ import '../../../core/network/api_client.dart';
 import '../../../core/network/api_endpoints.dart';
 import '../../../models/news_model.dart';
 
-/// Remote data source for news ("Novinky"). Online-only — no local storage.
+/// Remote data source for news ("Novinky"). `NewsRepository` keeps the copy
+/// shown offline.
 class NewsRemoteDataSource {
   final ApiClient _apiClient;
 

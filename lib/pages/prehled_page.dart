@@ -10,13 +10,17 @@ import '../core/gamification/global_quiz_selection.dart';
 import '../core/strings/app_strings.dart';
 import '../core/theme/app_theme.dart';
 import '../core/providers/core_providers.dart';
+import '../core/providers/navigation_providers.dart';
 import '../core/providers/practice_providers.dart';
 import '../core/util/silent_log.dart';
 import '../data/repositories/user_course_repository.dart';
 import '../data/repositories/user_stats_repository.dart';
+import '../features/dashboard/dashboard_banner_link.dart';
 import '../models/chat_models.dart';
 import '../models/course_card_view.dart';
 import '../models/course_model.dart';
+import '../models/dashboard_banner.dart';
+import '../routing/notification_deep_link.dart';
 import '../routing/tab_routes.dart';
 import '../utils/achievement_stats.dart';
 import '../widgets/widgets.dart';
@@ -46,21 +50,43 @@ const int _dashboardCourseLimit = 4;
 /// challenge.
 const String _onboardingCourseId = 'EDU_ONBOARDING_APP';
 
-/// `courses.course_id` of the entrance-exam (JPZ) intro course behind the
-/// "Uvažuješ o přijímačkách?" banner.
-const String _jpzIntroCourseId = 'EDU_JPZ_INTRO';
-
-/// Whether the JPZ intro course has reached this device.
+/// Whether the course with this `courses.course_id` has reached this device.
 ///
-/// The banner below the Cermatík threshold has nowhere to go without it, so it
+/// A banner pointing at a local course has nowhere to go without it, so it
 /// hides rather than dead-ends. Watching the course stream (not just reading
 /// the table once) means a course that arrives with a later sync brings the
 /// banner with it, without an app restart.
-final _jpzCourseAvailableProvider = FutureProvider<bool>((ref) async {
+final _localCourseAvailableProvider =
+    FutureProvider.family<bool, String>((ref, fieldCourseId) async {
   ref.watch(coursesStreamProvider);
   final db = ref.watch(appDatabaseProvider);
-  return await db.getCourseByFieldCourseId(_jpzIntroCourseId) != null;
+  return await db.getCourseByFieldCourseId(fieldCourseId) != null;
 });
+
+/// The banners to put on the dashboard right now (BR-SAWX2U).
+///
+/// The server already applied the conditions the device cannot evaluate and
+/// sorted the rows; this applies the XP band against the local XP, which is
+/// the authoritative one between syncs, and drops a banner whose local-course
+/// target has not reached the device yet.
+///
+/// Must be called from `build` — it registers provider dependencies.
+List<DashboardBanner> _bannersToShow(WidgetRef ref, int xp) {
+  final banners = ref.watch(dashboardBannersProvider).valueOrNull ??
+      const <DashboardBanner>[];
+
+  return banners.where((banner) {
+    if (!banner.appliesTo(xp)) return false;
+
+    final link = DashboardBannerLink.parse(banner.link);
+    if (link.kind != DashboardBannerLinkKind.fieldCourse) return true;
+
+    return ref
+            .watch(_localCourseAvailableProvider(link.fieldCourseId!))
+            .valueOrNull ??
+        false;
+  }).toList();
+}
 
 /// Index of the Kurzy tab, for the "show all" link.
 const int _kurzyTabIndex = 3;
@@ -133,7 +159,7 @@ class PrehledPage extends ConsumerWidget {
       BuildContext context, WidgetRef ref, UserStats? stats) async {
     final config = ref.read(gamificationConfigProvider).valueOrNull;
     final earnedIds =
-        ref.read(earnedAchievementsProvider).valueOrNull ?? <String>[];
+        await readEarnedAchievementIds(ref.read(appDatabaseProvider));
 
     // Refresh skills to get latest data (may fetch from API if not synced yet).
     ref.invalidate(skillDisplayProvider);
@@ -159,7 +185,7 @@ class PrehledPage extends ConsumerWidget {
           coursesCompleted: counts.courses,
           quizzesCompleted: counts.quizzes,
           config: config,
-          earnedIds: earnedIds.toSet(),
+          earnedIds: earnedIds,
           skills: skills,
         ),
       ),
@@ -174,11 +200,12 @@ class PrehledPage extends ConsumerWidget {
     // The count above already respects the student's practice scope, so the
     // tile has to be able to say when *the selection* is what emptied it.
     final practiceScoped = !ref.watch(practiceFilterProvider).isAll;
-    // Watched here rather than inside the LayoutBuilder below: that callback
-    // runs during layout, and a dependency registered there would ask for a
-    // rebuild mid-layout.
-    final jpzCourseAvailable =
-        ref.watch(_jpzCourseAvailableProvider).valueOrNull ?? false;
+    // The admin-managed banners (BR-SAWX2U), narrowed to the ones this
+    // learner's XP puts in range and whose local-course target is actually on
+    // the device. Watched here rather than inside the LayoutBuilder below:
+    // that callback runs during layout, and a dependency registered there
+    // would ask for a rebuild mid-layout.
+    final banners = _bannersToShow(ref, stats?.xpPoints ?? 0);
     final screen = context.widthClass;
     final isMobile = screen == WidthClass.compact;
     final isDesktop = screen == WidthClass.expanded;
@@ -202,7 +229,7 @@ class PrehledPage extends ConsumerWidget {
           ref: ref,
           stats: stats,
           xp: stats?.xpPoints ?? 0,
-          jpzCourseAvailable: jpzCourseAvailable,
+          banners: banners,
           dueCount: dueCount,
           practiceScoped: practiceScoped,
           userCoursesAsync: userCoursesAsync,
@@ -272,7 +299,7 @@ class PrehledPage extends ConsumerWidget {
     required WidgetRef ref,
     required UserStats? stats,
     required int xp,
-    required bool jpzCourseAvailable,
+    required List<DashboardBanner> banners,
     required int dueCount,
     required bool practiceScoped,
     required AsyncValue<List<UserCourse>> userCoursesAsync,
@@ -341,11 +368,10 @@ class PrehledPage extends ConsumerWidget {
         visibleCourses: visibleCourses,
         pad: pad,
       ),
-      ..._buildJpzSection(
+      ..._buildBannerSection(
         context: context,
         ref: ref,
-        xp: xp,
-        courseAvailable: jpzCourseAvailable,
+        banners: banners,
         userCoursesAsync: userCoursesAsync,
         pad: pad,
       ),
@@ -582,13 +608,26 @@ class PrehledPage extends ConsumerWidget {
       isCompleted: uc?.isCompleted ?? false,
     );
 
-    Navigator.of(context).push(
-      shellPageRoute(
-        context,
-        builder: (_) => CourseDetailPage(
-          course: course,
-          userCourseId: uc?.id,
-        ),
+    _openCourseDetail(context, ref, course, userCourseId: uc?.id);
+  }
+
+  /// Every course page opened from here belongs to Kurzy: on a wide viewport
+  /// its sidebar lights Kurzy and "Zpět na všechny kurzy" goes there, not back
+  /// to the dashboard (BR-HVUEFS). Lessons opened straight from the dashboard
+  /// stay put — their back link returns here.
+  void _openCourseDetail(
+    BuildContext context,
+    WidgetRef ref,
+    Course course, {
+    required String? userCourseId,
+  }) {
+    pushShellPageInTab<void>(
+      context,
+      ref,
+      tabIndex: kKurzyTabIndex,
+      builder: (_) => CourseDetailPage(
+        course: course,
+        userCourseId: userCourseId,
       ),
     );
   }
@@ -791,9 +830,7 @@ class PrehledPage extends ConsumerWidget {
     required List<UserCourse> visibleCourses,
     required Widget Function(Widget) pad,
   }) {
-    final quizzable = visibleCourses
-        .where((uc) => courseDataHasQuestions(uc.courseData))
-        .toList();
+    final quizzable = globalQuizCourses(visibleCourses);
     if (quizzable.isEmpty) return const [];
 
     return [
@@ -807,10 +844,17 @@ class PrehledPage extends ConsumerWidget {
         subtitle: AppStrings.globalQuizSubtitle,
         showProgressBar: false,
         buttonText: AppStrings.globalQuizStart,
-        onButtonTap: () => _startGlobalQuiz(context, ref, quizzable),
+        onButtonTap: () => startGlobalQuiz(context, ref, quizzable),
       )),
     ];
   }
+
+  /// The courses the "Dej si kvíz" challenge draws from: the dashboard's
+  /// (tests excluded, BR-E495XK) that hold at least one question.
+  static List<UserCourse> globalQuizCourses(Iterable<UserCourse> courses) => [
+        for (final uc in courses)
+          if (!uc.isOnlyOnce && courseDataHasQuestions(uc.courseData)) uc,
+      ];
 
   /// Ask what to practise, pick ten ELO-matched questions, open [QuizPage].
   ///
@@ -826,7 +870,10 @@ class PrehledPage extends ConsumerWidget {
   /// QuizPage's course-keyed resume/progress writes all early-return instead of
   /// corrupting a real course's state the way BR-CNSK2C did, while the attempt
   /// still reaches the server under a stable id.
-  Future<void> _startGlobalQuiz(
+  ///
+  /// Static so the notification deep link `/quiz` can start the same quiz
+  /// without the dashboard on screen.
+  static Future<void> startGlobalQuiz(
     BuildContext context,
     WidgetRef ref,
     List<UserCourse> courses,
@@ -980,82 +1027,101 @@ class PrehledPage extends ConsumerWidget {
     );
   }
 
-  /// "Uvažuješ o přijímačkách?" — the JPZ intro course, or the Cermatík chat
-  /// once the learner is past `cermatikInsteadOfJpz` XP (BR-ERUJBY).
+  /// The admin-managed banner strip (BR-SAWX2U).
   ///
-  /// Below that threshold the banner needs the intro course to exist on the
-  /// device; without it there is nowhere to send the learner, so it stays
-  /// hidden until sync brings the course in.
-  List<Widget> _buildJpzSection({
+  /// This slot used to be the hard-coded "Uvažuješ o přijímačkách?" card and
+  /// its Cermatík variant; both now come from the server, seeded with the
+  /// same texts and thresholds, so the client retunes them in the admin
+  /// instead of waiting for a release. Several banners may match at once —
+  /// the admin's order decides, and the server already sorted them.
+  List<Widget> _buildBannerSection({
     required BuildContext context,
     required WidgetRef ref,
-    required int xp,
-    required bool courseAvailable,
+    required List<DashboardBanner> banners,
     required AsyncValue<List<UserCourse>> userCoursesAsync,
     required Widget Function(Widget) pad,
   }) {
-    final toCermatik = DashboardTiers.showsCermatik(xp);
-    if (!toCermatik && !courseAvailable) return const [];
+    if (banners.isEmpty) return const [];
 
     return [
-      const SizedBox(height: 16),
-      pad(PromoCard(
-        badge: AppStrings.jpzBadge,
-        title: AppStrings.jpzTitle,
-        description: toCermatik
-            ? AppStrings.jpzCermatikDescription
-            : AppStrings.jpzDescription,
-        borderColor: AppColors.primary,
-        illustrationPath: 'assets/images/card_news_bg.png',
-        onTap: () {
-          if (toCermatik) {
-            _openCermatikChat(context, ref);
-          } else {
-            _openLocalCourse(
-              context,
-              ref,
-              fieldCourseId: _jpzIntroCourseId,
-              userCoursesAsync: userCoursesAsync,
-            );
-          }
-        },
-      )),
+      for (final banner in banners) ...[
+        const SizedBox(height: 16),
+        pad(PromoCard(
+          badge: banner.badge,
+          title: banner.title,
+          description: banner.body,
+          borderColor: _bannerAccent(banner.accent),
+          illustrationPath: _bannerIllustration(banner.illustration),
+          onTap: banner.link == null
+              ? null
+              : () => _openBanner(context, ref, banner, userCoursesAsync),
+        )),
+      ],
     ];
   }
 
-  /// Start a fresh conversation with the entrance-exam mentor.
+  /// The banner's border colour. An accent the build does not know falls back
+  /// to the card's own default rather than dropping the banner.
+  static Color? _bannerAccent(String accent) => switch (accent) {
+        'orange' => AppColors.orange,
+        'green' => AppColors.success,
+        'purple' => AppColors.quizPurple,
+        'primary' => AppColors.primary,
+        _ => null,
+      };
+
+  /// Illustrations are part of the app build, so the server sends a key.
+  static String? _bannerIllustration(String? illustration) =>
+      switch (illustration) {
+        'news' => 'assets/images/card_news_bg.png',
+        _ => null,
+      };
+
+  /// Carry out a banner's tap.
   ///
-  /// The session is created up front rather than passing an empty id:
-  /// ChatDetailPage only self-creates when it is also given an opening message,
-  /// and there is none to send here.
-  Future<void> _openCermatikChat(BuildContext context, WidgetRef ref) async {
-    try {
-      final user = await ref.read(activeUserProvider.future);
-      if (user == null) return;
+  /// The two dashboard-only targets are handled here; everything else goes to
+  /// the notification link resolver, which lands on the dashboard for a link
+  /// it cannot read instead of doing nothing (NOTIF-4 D).
+  Future<void> _openBanner(
+    BuildContext context,
+    WidgetRef ref,
+    DashboardBanner banner,
+    AsyncValue<List<UserCourse>> userCoursesAsync,
+  ) async {
+    final link = DashboardBannerLink.parse(banner.link);
 
-      final session = await ref
-          .read(chatRepositoryProvider)
-          .createSession(user.id, ChatPersona.cermatik.id);
-
-      if (!context.mounted) return;
-      Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => ChatDetailPage(
-            sessionId: session.id,
-            sessionTitle: session.title.isNotEmpty
-                ? session.title
-                : ChatPersona.cermatik.displayName,
-            persona: ChatPersona.cermatik,
-          ),
-        ),
-      );
-    } catch (e, st) {
-      silentLog('prehled_page', e, st);
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(AppStrings.chatRequiresInternet)),
-      );
+    switch (link.kind) {
+      case DashboardBannerLinkKind.none:
+        return;
+      case DashboardBannerLinkKind.fieldCourse:
+        await _openLocalCourse(
+          context,
+          ref,
+          fieldCourseId: link.fieldCourseId!,
+          userCoursesAsync: userCoursesAsync,
+        );
+      case DashboardBannerLinkKind.chatPersona:
+        _openPersonaChat(context, link.persona!);
+      case DashboardBannerLinkKind.notification:
+        await openNotificationLink(context, ref, banner.link);
     }
+  }
+
+  /// Start a fresh conversation with one of the mentors.
+  ///
+  /// ChatDetailPage creates the session with the first message (Rule 11.6), so
+  /// a student who backs out without typing leaves no empty chat behind
+  /// (BR-ESXSZY).
+  void _openPersonaChat(BuildContext context, ChatPersona persona) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ChatDetailPage(
+          sessionId: '',
+          sessionTitle: persona.displayName,
+          persona: persona,
+        ),
+      ),
+    );
   }
 
   /// "Rychlé kvízy" and "Pokračovat" — carousels on phones, grids when there
@@ -1217,15 +1283,7 @@ class PrehledPage extends ConsumerWidget {
                   completedLessons: uc.completedLessons,
                   isCompleted: uc.isCompleted,
                 );
-                Navigator.of(context).push(
-                  shellPageRoute(
-      context,
-                    builder: (_) => CourseDetailPage(
-                      course: course,
-                      userCourseId: uc.id,
-                    ),
-                  ),
-                );
+                _openCourseDetail(context, ref, course, userCourseId: uc.id);
               },
             );
           }).toList(),
@@ -1282,13 +1340,16 @@ class PrehledPage extends ConsumerWidget {
           )
         : child;
 
-    // Scrolls horizontally and carries its own 16px padding, so on phones it
-    // stays outside pad() and bleeds to the edge like the carousels do.
+    // Scrolls horizontally. On phones it carries its own 16px padding and
+    // stays outside pad(), so it bleeds to the edge like the carousels do;
+    // wider layouts have no such gutter, so its first chip lines up with the
+    // heading instead.
     final chips = FilterChipRow(
       labels: _dashboardFilters,
       selectedIndex: filterIndex,
       onSelected: (i) =>
           ref.read(_dashboardCourseFilterProvider.notifier).state = i,
+      padding: isMobile ? FilterChipRow.gutterPadding : EdgeInsets.zero,
     );
 
     final showAllLink = GestureDetector(
@@ -1321,14 +1382,13 @@ class PrehledPage extends ConsumerWidget {
           const SizedBox(height: 12),
           chips,
         ] else
-          Row(
-            children: [
-              heading,
-              const SizedBox(width: 16),
-              Expanded(child: chips),
-              const SizedBox(width: 16),
-              showAllLink,
-            ],
+          // Wider layouts keep the three on one line, but only while every
+          // chip fits on it whole: squeezed in between, the scrolling row cut
+          // "Probíhající" off mid-word right at the link (BR-QRTHCM).
+          ChipsHeadingBar(
+            heading: heading,
+            chips: chips,
+            action: showAllLink,
           ),
         const SizedBox(height: 16),
         if (filtered.isEmpty)
@@ -1349,7 +1409,7 @@ class PrehledPage extends ConsumerWidget {
             children: [
               for (var i = 0; i < filtered.length; i++) ...[
                 if (i > 0) const SizedBox(height: 12),
-                _buildDashboardCourseListCard(context, filtered[i]),
+                _buildDashboardCourseListCard(context, ref, filtered[i]),
               ],
             ],
           ))
@@ -1366,6 +1426,7 @@ class PrehledPage extends ConsumerWidget {
             itemCount: filtered.length,
             itemBuilder: (context, index) => _buildDashboardCourseCard(
               context,
+              ref,
               filtered[index],
               headerColors[index % headerColors.length],
             ),
@@ -1398,6 +1459,7 @@ class PrehledPage extends ConsumerWidget {
   /// Kurzy tab cannot disagree about a course's progress.
   ({CourseCardView view, VoidCallback open}) _dashboardCourse(
     BuildContext context,
+    WidgetRef ref,
     UserCourse userCourse,
   ) {
     final view = CourseCardView.of(userCourse);
@@ -1410,15 +1472,7 @@ class PrehledPage extends ConsumerWidget {
         isCompleted: userCourse.isCompleted,
         fallbackName: view.title,
       );
-      Navigator.of(context).push(
-        shellPageRoute(
-          context,
-          builder: (_) => CourseDetailPage(
-            course: course,
-            userCourseId: userCourse.id,
-          ),
-        ),
-      );
+      _openCourseDetail(context, ref, course, userCourseId: userCourse.id);
     }
 
     return (view: view, open: open);
@@ -1428,9 +1482,10 @@ class PrehledPage extends ConsumerWidget {
   /// the same course looks the same on both screens.
   Widget _buildDashboardCourseListCard(
     BuildContext context,
+    WidgetRef ref,
     UserCourse userCourse,
   ) {
-    final (:view, :open) = _dashboardCourse(context, userCourse);
+    final (:view, :open) = _dashboardCourse(context, ref, userCourse);
 
     return KurzyCourseCard(
       iconWidget: ClipOval(
@@ -1447,6 +1502,7 @@ class PrehledPage extends ConsumerWidget {
       badge: view.badge,
       lessonCount: view.lessonCount,
       durationHours: view.durationHours,
+      durationMinutes: view.durationMinutes,
       currentProgress: view.currentProgress,
       totalProgress: view.totalProgress,
       status: view.status,
@@ -1458,10 +1514,11 @@ class PrehledPage extends ConsumerWidget {
   /// Tablet and desktop tile, where a card sits in a ~300px column.
   Widget _buildDashboardCourseCard(
     BuildContext context,
+    WidgetRef ref,
     UserCourse userCourse,
     Color headerColor,
   ) {
-    final (:view, :open) = _dashboardCourse(context, userCourse);
+    final (:view, :open) = _dashboardCourse(context, ref, userCourse);
     final isCompleted = userCourse.status == UserCourseStatus.completed;
     final cta = isCompleted
         ? AppStrings.courseCardReview
@@ -1475,7 +1532,7 @@ class PrehledPage extends ConsumerWidget {
       headerColor: headerColor,
       title: view.title,
       meta: '${AppStrings.lessonsCount(view.lessonCount)} · '
-          '${AppStrings.durationHours(view.durationHours)}',
+          '${view.durationLabel}',
       pills: [
         if (userCourse.hasUpdate)
           CourseCardPill(
@@ -1535,19 +1592,13 @@ class PrehledPage extends ConsumerWidget {
           ContinueLessonCard.course(
             courseTitle:
                 startedCourse.courseName ?? AppStrings.defaultCourseName,
-            // A quiz-only course has no lessons to have finished.
-            lessonLabel: _lessonCountOf(startedCourse) > 0
-                ? AppStrings.continueLessonAllDone
-                : AppStrings.continueLessonQuizOnly,
+            lessonLabel: _noLessonToResumeLabel(startedCourse),
             buttonLabel: AppStrings.continueLessonOpenCourse,
-            onContinue: () => Navigator.of(context).push(
-              shellPageRoute(
-                context,
-                builder: (_) => CourseDetailPage(
-                  course: _courseFrom(startedCourse, startedCourse.courseData!),
-                  userCourseId: startedCourse.id,
-                ),
-              ),
+            onContinue: () => _openCourseDetail(
+              context,
+              ref,
+              _courseFrom(startedCourse, startedCourse.courseData!),
+              userCourseId: startedCourse.id,
             ),
           )
       else
@@ -1572,7 +1623,7 @@ class PrehledPage extends ConsumerWidget {
       // No `onShowAll`: there is no activity history screen to show, and a
       // second link that goes nowhere is the bug this card was just fixed for.
       RecentActivityCard(
-        entries: _buildActivityEntries(context, visibleCourses),
+        entries: _buildActivityEntries(context, ref, visibleCourses),
       ),
     ];
   }
@@ -1588,6 +1639,34 @@ class PrehledPage extends ConsumerWidget {
   int _lessonCountOf(UserCourse uc) {
     final lessons = uc.courseData?['lessons'] as List<dynamic>?;
     return lessons?.length ?? uc.totalLessons;
+  }
+
+  /// Whether the course is answered by a quiz before any lesson: a quiz-only
+  /// course, or a `starts_with_quiz` course whose entry quiz is not passed
+  /// yet. The course page keeps every lesson of the latter locked until it
+  /// is (rule 6.1), and reads the pass the same way (BR-MKFPU6).
+  bool _quizComesFirst(UserCourse uc) {
+    final data = uc.courseData;
+    if (data?['only_quiz'] == true) return true;
+    return data?['starts_with_quiz'] == true &&
+        uc.progressData['quiz_completed'] != true;
+  }
+
+  /// What the "Pokračuj v lekci" card says when it offers [uc]'s course page
+  /// rather than a lesson — the reason there is no lesson to go back into.
+  ///
+  /// "All done" only once nothing else explains it: it used to be the answer
+  /// for any course with lessons, which is how a course with three untouched
+  /// lessons came to claim they were finished (BR-W6V77D).
+  String _noLessonToResumeLabel(UserCourse uc) {
+    // The course page locks every lesson until the update is installed.
+    if (uc.hasUpdate) return AppStrings.courseUpdateAvailable;
+    // The quiz is what is left: a quiz-only course has no lessons to have
+    // finished, and an entry quiz still locks them.
+    if (_quizComesFirst(uc) || _lessonCountOf(uc) == 0) {
+      return AppStrings.continueLessonQuizOnly;
+    }
+    return AppStrings.continueLessonAllDone;
   }
 
   /// The course the "Pokračuj v lekci" card points at when no lesson inside
@@ -1622,8 +1701,11 @@ class PrehledPage extends ConsumerWidget {
   /// blocks.
   ///
   /// Null when the course cannot be resumed *into a lesson* — not started,
-  /// finished, quiz-only, content not downloaded, or every lesson already done.
-  /// Callers fall back to the course detail page in that case.
+  /// finished, content not downloaded, every lesson already done, or its
+  /// lessons locked on the course page: a quiz comes first, or a newer version
+  /// waits to be installed. Opening a lesson from here must not get round a
+  /// lock the course page enforces (rule 6.1). Callers fall back to the course
+  /// detail page in that case.
   ///
   /// Shared by the "Pokračovat v lekci" rail card and the "Nedávná aktivita"
   /// rows, so the two can never send the learner to different lessons of the
@@ -1633,31 +1715,25 @@ class PrehledPage extends ConsumerWidget {
     if (!uc.hasStarted ||
         uc.isCompleted ||
         data == null ||
-        data['only_quiz'] == true) {
+        uc.hasUpdate ||
+        _quizComesFirst(uc)) {
       return null;
     }
 
     final course = _courseFrom(uc, data);
-    if (course.lessons.isEmpty) return null;
+    // Counted off the course JSON: `Lesson.blocks` is empty until the lesson
+    // opens, so every lesson read as 0 of 0 and the card claimed all of them
+    // were done (BR-W6V77D).
+    final progress = Course.lessonBlockProgress(data, uc.progressData);
 
-    final progressLessons =
-        uc.progressData['lessons'] as Map<String, dynamic>? ?? const {};
-
-    for (var i = 0; i < course.lessons.length; i++) {
-      final lesson = course.lessons[i];
-      final total = lesson.blocks.length;
-      if (total == 0) continue;
-
-      final lessonProgress =
-          progressLessons[lesson.id] as Map<String, dynamic>?;
-      final done =
-          (lessonProgress?['completed_blocks'] as List<dynamic>?)?.length ?? 0;
-      if (done >= total) continue;
+    for (var i = 0; i < course.lessons.length && i < progress.length; i++) {
+      final (:done, :total) = progress[i];
+      if (total == 0 || done >= total) continue;
 
       return _CurrentLesson(
         userCourse: uc,
         course: course,
-        lesson: lesson,
+        lesson: course.lessons[i],
         lessonIndex: i,
         stepsDone: done,
         stepsTotal: total,
@@ -1666,13 +1742,16 @@ class PrehledPage extends ConsumerWidget {
     return null;
   }
 
-  /// The in-memory [Course] for a stored row, with its progress applied.
+  /// The in-memory [Course] for a stored row, with its progress applied —
+  /// per lesson too, as the course page builds it, so a lesson opened from
+  /// here shows the same done and locked lessons as one opened there.
   Course _courseFrom(UserCourse uc, Map<String, dynamic> data) =>
       Course.fromJsonData(
         id: uc.courseId,
         data: data,
         completedLessons: uc.completedLessons,
         isCompleted: uc.isCompleted,
+        lessonsProgress: uc.progressData['lessons'] as Map<String, dynamic>?,
         fallbackName: uc.courseName,
       );
 
@@ -1683,6 +1762,7 @@ class PrehledPage extends ConsumerWidget {
   /// the local DB has.
   List<ActivityEntry> _buildActivityEntries(
     BuildContext context,
+    WidgetRef ref,
     List<UserCourse> courses,
   ) {
     final touched = courses.where((uc) => uc.hasStarted).toList()
@@ -1698,7 +1778,7 @@ class PrehledPage extends ConsumerWidget {
             : AppStrings.sectionContinue,
         subject: uc.courseName ?? AppStrings.defaultCourseName,
         timeLabel: AppStrings.timeAgoFrom(uc.updatedAt),
-        onTap: _activityTapFor(context, uc),
+        onTap: _activityTapFor(context, ref, uc),
       );
     }).toList();
   }
@@ -1711,7 +1791,11 @@ class PrehledPage extends ConsumerWidget {
   /// Null only when the course content is not stored locally: there is nothing
   /// to open, and a row that opens a broken screen is no better than the dead
   /// row this replaces (BR-9NDW6D).
-  VoidCallback? _activityTapFor(BuildContext context, UserCourse uc) {
+  VoidCallback? _activityTapFor(
+    BuildContext context,
+    WidgetRef ref,
+    UserCourse uc,
+  ) {
     final data = uc.courseData;
     if (data == null) return null;
 
@@ -1720,20 +1804,20 @@ class PrehledPage extends ConsumerWidget {
     // often than these three rows are clicked.
     return () {
       final resume = _resumeTargetFor(uc);
+      if (resume == null) {
+        _openCourseDetail(context, ref, _courseFrom(uc, data),
+            userCourseId: uc.id);
+        return;
+      }
       Navigator.of(context).push(
         shellPageRoute(
           context,
-          builder: (_) => resume != null
-              ? LessonDetailPage(
-                  course: resume.course,
-                  lesson: resume.lesson,
-                  lessonIndex: resume.lessonIndex,
-                  userCourseId: resume.userCourse.id,
-                )
-              : CourseDetailPage(
-                  course: _courseFrom(uc, data),
-                  userCourseId: uc.id,
-                ),
+          builder: (_) => LessonDetailPage(
+            course: resume.course,
+            lesson: resume.lesson,
+            lessonIndex: resume.lessonIndex,
+            userCourseId: resume.userCourse.id,
+          ),
         ),
       );
     };

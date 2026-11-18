@@ -14,6 +14,7 @@ import '../core/evaluation/expected_answer.dart';
 import '../core/strings/app_strings.dart';
 import '../core/theme/app_theme.dart';
 import '../core/ui/app_toast.dart';
+import '../core/util/silent_log.dart';
 import '../data/repositories/open_answer_repository.dart';
 import '../models/block_model.dart';
 import '../models/step_navigation.dart';
@@ -177,6 +178,18 @@ class OpenAnswerEvent {
   });
 }
 
+/// A block's outcome once every answer in it has been graded (BR-5Q4MA3).
+///
+/// What [BlockStepEngine.onGradingDeferred] hands over: the score and XP that
+/// onBlockCompleted would have carried had the engine waited for the verdict,
+/// plus the step answers with that verdict in them, for hosts whose engine has
+/// been torn down by the time it lands.
+typedef BlockGrading = ({
+  int earnedXp,
+  double scoreKoef,
+  StepProgressData progress,
+});
+
 /// Internal state of the step engine
 enum _EngineState {
   showingStep,     // Displaying a text/image/video step or a question before answer
@@ -195,6 +208,17 @@ class BlockStepEngine extends ConsumerStatefulWidget {
   final void Function()? onChatRequested;
   final void Function(StepProgressData)? onStepProgress;
   final StepProgressData? savedProgress;
+
+  /// A photo picked for the current question and not yet sent, handed back by
+  /// the host when it builds this block again (BR-PW5EQK).
+  ///
+  /// The lesson is a lazy list: a block scrolled far enough away is torn down
+  /// and rebuilt from [savedProgress] when it returns. The photo cannot travel
+  /// in [StepProgressData] — that is persisted and synced, and a pupil's photo
+  /// has no business sitting in either — so the host keeps it in memory,
+  /// told of every change through [onPickedPhotoChanged].
+  final PickedAnswerPhoto? pickedPhoto;
+  final void Function(PickedAnswerPhoto? photo)? onPickedPhotoChanged;
 
   /// Optional controller for external answer confirmation (used by QuizPage).
   /// When provided, the engine hides its own bottom row and lets the parent
@@ -243,6 +267,20 @@ class BlockStepEngine extends ConsumerStatefulWidget {
   /// When true, suppress all correct/incorrect feedback (course-level quizEvaluate=false).
   final bool hideEvaluation;
 
+  /// Lets an open answer be graded after the student has moved on
+  /// (BR-5Q4MA3).
+  ///
+  /// A quiz that hides evaluation shows nothing about the answer, so holding
+  /// the student on "Promýšlím tvou odpověď..." for the length of an AI call
+  /// bought them nothing. With this set, such an answer is sent off and the
+  /// block moves on at once.
+  ///
+  /// Called at most once per block, ahead of onBlockCompleted. The future
+  /// completes once the block is done and every background grading in it has
+  /// landed; its score and XP replace the provisional ones onBlockCompleted
+  /// carries. Left null, the engine waits for the verdict as it always has.
+  final void Function(Future<BlockGrading> grading)? onGradingDeferred;
+
   // Block-level UI state (for exercise/question blocks)
   final bool isBookmarked;
   final bool isLiked;
@@ -264,8 +302,11 @@ class BlockStepEngine extends ConsumerStatefulWidget {
     this.onChatRequested,
     this.onStepProgress,
     this.savedProgress,
+    this.pickedPhoto,
+    this.onPickedPhotoChanged,
     this.controller,
     this.hideEvaluation = false,
+    this.onGradingDeferred,
     this.onBookmarkToggle,
     this.onLikeToggle,
     this.onDislikeToggle,
@@ -324,6 +365,16 @@ class _BlockStepEngineState extends ConsumerState<BlockStepEngine> {
   /// attempt is handed off. A retry therefore gets a fresh key and is stored as
   /// its own attempt rather than overwriting the one before it.
   final Map<String, String> _attemptIds = {};
+
+  // ─── Grading after the student moved on (BR-5Q4MA3) ───────────────────────
+
+  /// Open answers sent off without waiting whose verdict has not landed yet.
+  int _gradingsInFlight = 0;
+
+  /// The block's final outcome as promised to the host through
+  /// [BlockStepEngine.onGradingDeferred]. Completed by whichever comes last:
+  /// the block finishing, or its last background grading landing.
+  Completer<BlockGrading>? _deferredGrading;
 
   late _EngineState _state;
   late int _currentStepIndex;
@@ -448,6 +499,7 @@ class _BlockStepEngineState extends ConsumerState<BlockStepEngine> {
   @override
   void initState() {
     super.initState();
+    _pickedPhoto = widget.pickedPhoto;
     _restoreOrInitState();
     widget.controller?._attach(_boundConfirm);
     widget.controller?._attachContinue(_boundContinue);
@@ -726,6 +778,9 @@ class _BlockStepEngineState extends ConsumerState<BlockStepEngine> {
       _state = _EngineState.awaitingAnswer;
     });
     widget.controller?._setPendingAnswer(_canConfirm);
+    // A pick not yet checked is reported like any other progress, or the
+    // block rebuilt after scrolling away comes back without it (BR-PW5EQK).
+    _emitProgress();
   }
 
   /// Record a multi-select pick for [step].
@@ -741,6 +796,7 @@ class _BlockStepEngineState extends ConsumerState<BlockStepEngine> {
       _state = _EngineState.awaitingAnswer;
     });
     widget.controller?._setPendingAnswer(_canConfirm);
+    _emitProgress();
   }
 
   /// Handle text answer change
@@ -847,13 +903,22 @@ class _BlockStepEngineState extends ConsumerState<BlockStepEngine> {
         _attemptIds.remove(step.stepId);
       }
 
-      if (text.isNotEmpty &&
-          (reopening || _state != _EngineState.showingSolution)) {
+      // A reopened attempt is waiting for its answer even while the field is
+      // empty. Deleting the old answer is usually the first edit, and it is the
+      // one that reopens: leaving the graded screen up for it meant the next
+      // keystroke found the attempt already open, so nothing ever moved the
+      // block on and "Zkontrolovat" stayed dead (BR-557HBK).
+      if (reopening ||
+          (text.isNotEmpty && _state != _EngineState.showingSolution)) {
         _state = _EngineState.awaitingAnswer;
       }
     });
 
     widget.controller?._setPendingAnswer(_canConfirm);
+    // Rule 6.2: typed text is never lost. The host keeps the draft and saves
+    // it, so it survives the block being rebuilt and the lesson being left
+    // (BR-PW5EQK) — before, only a checked answer was ever reported.
+    _emitProgress();
   }
 
   /// Confirm the answer for the current question step.
@@ -865,6 +930,11 @@ class _BlockStepEngineState extends ConsumerState<BlockStepEngine> {
   void _confirmAnswer() {
     if (_state != _EngineState.awaitingAnswer) return;
     if (_isEvaluatingWithAi) return;
+    // The same gate as the "Zkontrolovat" button. Enter in an answer field
+    // calls this directly, and without it a multi-question block was graded
+    // with its blank questions counted wrong — an empty one ended on 0
+    // points (BR-3DWDTT).
+    if (!_canConfirm) return;
     if (_isBatchBlock) {
       _confirmAllAnswers();
       return;
@@ -886,11 +956,168 @@ class _BlockStepEngineState extends ConsumerState<BlockStepEngine> {
     // decides whether the student is shown the AI's feedback or a plain
     // right/wrong with the solution — see StepContentRenderer.
     if (config.type == 'open') {
+      if (_canGradeInBackground(step, config, current)) {
+        _confirmOpenAnswerInBackground(step, config, current);
+        return;
+      }
       unawaited(_confirmOpenAnswerWithAi(step, config, current));
       return;
     }
 
     _applyAnswer(step, config, current);
+  }
+
+  /// Whether an open answer can be graded after the student has moved on
+  /// (BR-5Q4MA3) rather than with them waiting on "Promýšlím tvou odpověď...".
+  ///
+  /// Only where nothing about the verdict reaches the screen — a quiz that
+  /// hides evaluation — and only where nothing downstream needs it either:
+  /// - A photo on its own keeps waiting. When its evaluation fails, the retry
+  ///   is the only way the work gets graded at all; with text there is always
+  ///   the comparison with the expected answer to fall back on.
+  /// - A go_to that branches on right/wrong cannot pick the next step without
+  ///   the verdict.
+  /// - A later question in the same block keeps the old order of grading, so
+  ///   the block score comes out as it would have.
+  bool _canGradeInBackground(
+    BlockStep step,
+    EvaluationConfig config,
+    StepAnswerState current,
+  ) {
+    if (widget.onGradingDeferred == null) return false;
+    if (widget.exportMode != ExportMode.quizV2 || !widget.hideEvaluation) {
+      return false;
+    }
+    if (current.textAnswer?.trim().isEmpty ?? true) return false;
+
+    final onCorrect = GoToResolver.resolveNextActionGoTo(
+      nextActions: step.nextActions,
+      isCorrect: true,
+    );
+    final onIncorrect = GoToResolver.resolveNextActionGoTo(
+      nextActions: step.nextActions,
+      isCorrect: false,
+    );
+    if (onCorrect != onIncorrect) return false;
+
+    final index = _steps.indexWhere((s) => s.stepId == step.stepId);
+    return !_steps.skip(index + 1).any((s) => s.isEvaluationStep);
+  }
+
+  /// Record the answer, move on, and let the grading finish in the background.
+  ///
+  /// The step is marked answered without a verdict — the screen shows none in
+  /// this mode anyway — and the block carries on exactly as the waiting path
+  /// would have once the verdict was in.
+  void _confirmOpenAnswerInBackground(
+    BlockStep step,
+    EvaluationConfig config,
+    StepAnswerState current,
+  ) {
+    // The host hears about it before the block can complete, so it never
+    // books a provisional score as final.
+    final announce = _deferredGrading == null;
+    _deferredGrading ??= Completer<BlockGrading>();
+    _gradingsInFlight++;
+    if (announce) widget.onGradingDeferred!(_deferredGrading!.future);
+
+    unawaited(_gradeInBackground(step, config, current, _pickedPhoto));
+
+    _isAgainRetry = false;
+    _stepAnswers[step.stepId] =
+        current.copyWith(isAnswered: true, evaluationFailed: false);
+    widget.controller?._setPendingAnswer(false);
+    // Either go_to will do — _canGradeInBackground made sure they agree.
+    _resolveAndNavigate(GoToResolver.resolveNextActionGoTo(
+      nextActions: step.nextActions,
+      isCorrect: false,
+    ));
+  }
+
+  /// The grading half of [_confirmOpenAnswerInBackground].
+  ///
+  /// Same evaluation and the same fallback as [_confirmOpenAnswerWithAi]: the
+  /// AI's verdict, or the comparison with the expected answer when none came
+  /// back. Runs to the end even when the engine is gone — QuizPage replaces
+  /// it with the next question straight away — so only the screen update
+  /// depends on being mounted.
+  Future<void> _gradeInBackground(
+    BlockStep step,
+    EvaluationConfig config,
+    StepAnswerState current,
+    PickedAnswerPhoto? photo,
+  ) async {
+    try {
+      final evaluator = ref.read(aiAnswerEvaluatorProvider);
+
+      String? photoName = current.photoName;
+      if (config.allowPhoto && photo != null && photoName == null) {
+        final uploaded = await evaluator.uploadPhoto(
+          bytes: photo.bytes,
+          filename: photo.filename,
+        );
+        photoName = uploaded?.name;
+      }
+
+      final outcome = await evaluator.evaluate(
+        question: _questionStatementFor(step, config),
+        studentAnswer: current.textAnswer ?? '',
+        photoName: photoName,
+        help: step.help ?? widget.block.atomicHelp,
+        solution: config.solution,
+        correctAnswer: config.correctAnswer,
+        criteria: config.aiCriteria,
+        criteriaList: config.aiCriteriaList,
+      );
+      final aiResult = outcome.isSuccess ? outcome.result : null;
+
+      final graded = _evaluateStep(
+        step,
+        config,
+        current,
+        aiResult: aiResult,
+        photoName: photoName,
+      ).answer;
+
+      void apply() {
+        _stepAnswers[step.stepId] = graded;
+        _trackScore(config, graded.scoreKoef ?? 0.0);
+      }
+
+      if (mounted) {
+        setState(apply);
+      } else {
+        apply();
+      }
+
+      if (!(graded.isCorrect ?? false)) widget.onWrongAnswer?.call();
+      _reportOpenAnswer(step, config, current, graded.isCorrect ?? false,
+          aiResult: aiResult, photoName: photoName);
+      // A torn-down engine's progress goes to the host inside the BlockGrading
+      // instead: emitting it here could overwrite a newer attempt at the same
+      // question.
+      if (mounted) _emitProgress();
+    } catch (e, st) {
+      silentLog('block_step_engine:background_grading', e, st);
+    } finally {
+      _gradingsInFlight--;
+      _settleDeferredGrading();
+    }
+  }
+
+  /// Hand the host the block's final outcome, once there is one.
+  void _settleDeferredGrading() {
+    final grading = _deferredGrading;
+    if (grading == null || grading.isCompleted) return;
+    if (_state != _EngineState.blockComplete || _gradingsInFlight > 0) return;
+    // The XP _completeBlock counted went by answers still waiting for their
+    // verdict.
+    _earnedXp = _computeEarnedXp();
+    grading.complete((
+      earnedXp: _earnedXp,
+      scoreKoef: _finalScoreKoef,
+      progress: _progressSnapshot(),
+    ));
   }
 
   /// Evaluate an open answer with AI, then hand off to the shared tail.
@@ -1056,6 +1283,8 @@ class _BlockStepEngineState extends ConsumerState<BlockStepEngine> {
     // Not an unconditional true: in a multi-question block the other questions
     // still have to be filled before the block can be checked (BR-E4H835).
     widget.controller?._setPendingAnswer(_canConfirm);
+    widget.onPickedPhotoChanged?.call(photo);
+    _emitProgress();
   }
 
   void _onPhotoRemoved() {
@@ -1072,6 +1301,8 @@ class _BlockStepEngineState extends ConsumerState<BlockStepEngine> {
     // Removing the photo can empty the answer entirely, so the parent's
     // confirm button has to re-evaluate whether there is anything to submit.
     widget.controller?._setPendingAnswer(_canConfirm);
+    widget.onPickedPhotoChanged?.call(null);
+    _emitProgress();
   }
 
   /// Re-run a failed evaluation with the answer the student already wrote.
@@ -1382,6 +1613,25 @@ class _BlockStepEngineState extends ConsumerState<BlockStepEngine> {
     return (answer: updatedAnswer, goTo: goToValue);
   }
 
+  /// Track the score that counts (start from 0 on first answer).
+  ///
+  /// Repeated attempts have always taken the best. BR-P745Q8 makes that a
+  /// course setting for open questions, because a course built around
+  /// answering, reading feedback and answering again wants the latest attempt
+  /// to be the one that stands — otherwise a lucky first try masks the fact
+  /// that the student never got there on their own.
+  void _trackScore(EvaluationConfig config, double scoreKoef) {
+    final takeLast = config.type == 'open' && widget.openAnswerScore == 'last';
+    if (takeLast ||
+        _bestScoreKoef == _kUninitializedScore ||
+        scoreKoef > _bestScoreKoef) {
+      _bestScoreKoef = scoreKoef;
+    }
+  }
+
+  double get _finalScoreKoef =>
+      _bestScoreKoef == _kUninitializedScore ? 0.0 : _bestScoreKoef;
+
   /// Shared evaluation + navigation tail for every question type.
   void _applyAnswer(
     BlockStep step,
@@ -1403,19 +1653,7 @@ class _BlockStepEngineState extends ConsumerState<BlockStepEngine> {
     final effectiveScoreKoef = updatedAnswer.scoreKoef ?? 0.0;
     final markValue = updatedAnswer.markValue;
 
-    // Track the score that counts (start from 0 on first answer).
-    //
-    // Repeated attempts have always taken the best. BR-P745Q8 makes that a
-    // course setting for open questions, because a course built around
-    // answering, reading feedback and answering again wants the latest attempt
-    // to be the one that stands — otherwise a lucky first try masks the fact
-    // that the student never got there on their own.
-    final takeLast = config.type == 'open' && widget.openAnswerScore == 'last';
-    if (takeLast ||
-        _bestScoreKoef == _kUninitializedScore ||
-        effectiveScoreKoef > _bestScoreKoef) {
-      _bestScoreKoef = effectiveScoreKoef;
-    }
+    _trackScore(config, effectiveScoreKoef);
     _quizMark = markValue ?? _quizMark;
 
     widget.controller?._setPendingAnswer(false);
@@ -1645,6 +1883,18 @@ class _BlockStepEngineState extends ConsumerState<BlockStepEngine> {
     _scrollToActiveStep();
   }
 
+  /// Drop the recorded answers from [fromIndex] through the current step, so a
+  /// jump back over them starts them over instead of replaying their verdicts.
+  void _reopenAnswersFrom(int fromIndex) {
+    for (var i = fromIndex; i <= _currentStepIndex && i < _steps.length; i++) {
+      final stepId = _steps[i].stepId;
+      _stepAnswers.remove(stepId);
+      // A re-answer is a new attempt, so it gets its own idempotency key
+      // rather than overwriting the attempt it follows.
+      _attemptIds.remove(stepId);
+    }
+  }
+
   void _resolveAndNavigate(String? goToValue) {
     final action = GoToResolver.resolve(
       goToValue: goToValue,
@@ -1672,6 +1922,15 @@ class _BlockStepEngineState extends ConsumerState<BlockStepEngine> {
         case NavActionType.jumpToStep:
           final idx = _steps.indexWhere((s) => s.stepId == action.targetStepId);
           if (idx >= 0) {
+            // A jump back to this step or an earlier one sends the student
+            // through questions they have already answered, so those answers
+            // are reopened (BR-DVUNJD). Left in place they re-derive the very
+            // solution screen the jump was taken from — and in a question
+            // block, where display steps are skipped past, the continue tap
+            // lands back on the same question and fires the same jump for
+            // ever, with no way to change the answer. This is what AGAIN
+            // already does for a single step.
+            if (idx <= _currentStepIndex) _reopenAnswersFrom(idx);
             _currentStepIndex = idx;
             _state = _deriveState();
           } else {
@@ -1705,11 +1964,9 @@ class _BlockStepEngineState extends ConsumerState<BlockStepEngine> {
     _scrollToActiveStep();
   }
 
-  void _completeBlock() {
-    final finalScore = _bestScoreKoef == _kUninitializedScore ? 0.0 : _bestScoreKoef;
-
-    // Calculate granular XP from step types:
-    // +1 per display step (bubble), +8 per correct-no-hints exercise, +5 otherwise
+  /// Calculate granular XP from step types:
+  /// +1 per display step (bubble), +8 per correct-no-hints exercise, +5 otherwise
+  int _computeEarnedXp() {
     int rawXp = 0;
     for (final step in _steps) {
       if (step.isEvaluationStep) {
@@ -1720,7 +1977,12 @@ class _BlockStepEngineState extends ConsumerState<BlockStepEngine> {
         rawXp += 1; // display/text/image/video bubble
       }
     }
-    _earnedXp = rawXp;
+    return rawXp;
+  }
+
+  void _completeBlock() {
+    final finalScore = _finalScoreKoef;
+    _earnedXp = _computeEarnedXp();
 
     // Use setState to schedule a frame — without it, addPostFrameCallback
     // below has no frame to attach to and the deferred onBlockCompleted
@@ -1735,6 +1997,9 @@ class _BlockStepEngineState extends ConsumerState<BlockStepEngine> {
     // deferred onBlockCompleted below may be missed if the user navigates
     // away before the post-frame callback fires.
     _emitProgress();
+
+    // Every background grading may already have landed (BR-5Q4MA3).
+    _settleDeferredGrading();
 
     // Defer callback to avoid setState-during-build when called from
     // didUpdateWidget → _restoreOrInitState → _skipToNextQuestion chain.
@@ -1752,16 +2017,18 @@ class _BlockStepEngineState extends ConsumerState<BlockStepEngine> {
   }
 
   void _emitProgress() {
-    widget.onStepProgress?.call(StepProgressData(
-      blockId: widget.block.blockId,
-      currentStepIndex: _currentStepIndex,
-      stepAnswers: Map.from(_stepAnswers),
-      isBlockCompleted: _state == _EngineState.blockComplete,
-      bestScoreKoef: _bestScoreKoef == _kUninitializedScore ? 0.0 : _bestScoreKoef,
-      earnedXp: _earnedXp,
-      quizMark: _quizMark,
-    ));
+    widget.onStepProgress?.call(_progressSnapshot());
   }
+
+  StepProgressData _progressSnapshot() => StepProgressData(
+        blockId: widget.block.blockId,
+        currentStepIndex: _currentStepIndex,
+        stepAnswers: Map.from(_stepAnswers),
+        isBlockCompleted: _state == _EngineState.blockComplete,
+        bestScoreKoef: _finalScoreKoef,
+        earnedXp: _earnedXp,
+        quizMark: _quizMark,
+      );
 
   // ─── Build ────────────────────────────────────────────────
 
@@ -1919,7 +2186,7 @@ class _BlockStepEngineState extends ConsumerState<BlockStepEngine> {
     if (widget.controller == null) {
       children.add(const SizedBox(height: 24));
       children.add(_buildBottomRow());
-    } else if (_hasHintForCurrentStep) {
+    } else if (_hasHintOrHelpForCurrentStep) {
       children.add(const SizedBox(height: 16));
       children.add(_buildActionButtons());
     }
@@ -2035,13 +2302,7 @@ class _BlockStepEngineState extends ConsumerState<BlockStepEngine> {
             getAudioController: _getAudioController,
           ),
           const SizedBox(height: 24),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              _buildStepActionButtons(_currentStep),
-              _buildMainButton(),
-            ],
-          ),
+          _buildStepBottomRow(_buildStepActionButtons(_currentStep)),
         ],
       ),
     );
@@ -2062,15 +2323,65 @@ class _BlockStepEngineState extends ConsumerState<BlockStepEngine> {
     );
   }
 
-  Widget _buildBottomRow() {
+  Widget _buildBottomRow() => _buildStepBottomRow(_buildActionButtons());
+
+  /// The row under a step: action buttons on the left, the main button on the
+  /// right — replaced, while an open answer is out for AI grading, by a
+  /// full-width bar that names the wait.
+  ///
+  /// The pill on its own could not name it. Beside up to four action icons
+  /// inside a 24px-padded card it has well under 200px on a phone, so it
+  /// collapsed to a bare 20px spinner — and on a monitor that spinner sits at
+  /// the far right of the card, nowhere near the field just typed in. Three to
+  /// five seconds of it read as a frozen page (BR-J8DEXT). The quiz says the
+  /// sentence in its own bottom bar (BR-4AT4CC); taking the whole row for the
+  /// duration is where the lesson has the room for it.
+  Widget _buildStepBottomRow(Widget actions) {
+    if (_isEvaluatingWithAi) return _buildEvaluatingBar();
+
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         // Left side action buttons
-        _buildActionButtons(),
+        actions,
         // Right side: confirm/next button
         _buildMainButton(),
       ],
+    );
+  }
+
+  /// The main button grown to the full row: inert, spinning, and saying what
+  /// it is waiting for.
+  Widget _buildEvaluatingBar() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+      decoration: BoxDecoration(
+        color: AppColors.primaryDark,
+        borderRadius: AppDecorations.radiusM,
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Flexible(
+            child: Text(
+              AppStrings.openFeedbackEvaluating,
+              textAlign: TextAlign.center,
+              overflow: TextOverflow.ellipsis,
+              style: AppTextStyles.statValue(color: Colors.white),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -2081,10 +2392,11 @@ class _BlockStepEngineState extends ConsumerState<BlockStepEngine> {
           ? _steps[_currentStepIndex]
           : null;
 
-  /// Whether the step the student is on has a hint to offer — its own, or the
-  /// block's shared one as fallback (BR-JHDNB3).
-  bool get _hasHintForCurrentStep =>
-      widget.block.hasHintForStep(_currentStepOrNull?.stepId);
+  /// Whether the step the student is on has a hint or help to offer — its own,
+  /// or the block's shared one as fallback (BR-JHDNB3). Help alone is enough:
+  /// an author may have written only the second stage (BR-3FE9U7).
+  bool get _hasHintOrHelpForCurrentStep =>
+      widget.block.hasHintOrHelpForStep(_currentStepOrNull?.stepId);
 
   /// Per-step action buttons for display blocks — each step has independent state.
   Widget _buildStepActionButtons(BlockStep step) {
@@ -2117,8 +2429,9 @@ class _BlockStepEngineState extends ConsumerState<BlockStepEngine> {
         ),
       ],
       // Each step card carries its own hint button: a step without a hint of
-      // its own still offers the block's shared one (BR-JHDNB3).
-      if (widget.block.hasHintForStep(stepId))
+      // its own still offers the block's shared one (BR-JHDNB3), and a step
+      // with only help still opens the sheet at that help (BR-3FE9U7).
+      if (widget.block.hasHintOrHelpForStep(stepId))
         _buildActionButton(
           icon: Icons.help_outline,
           isActive: false,
@@ -2168,7 +2481,7 @@ class _BlockStepEngineState extends ConsumerState<BlockStepEngine> {
       ],
       // The single-bubble card shows one row for the whole block, so the hint
       // follows whichever step is live inside it (BR-JHDNB3).
-      if (_hasHintForCurrentStep)
+      if (_hasHintOrHelpForCurrentStep)
         _buildActionButton(
           icon: Icons.help_outline,
           isActive: false,
@@ -2273,25 +2586,8 @@ class _BlockStepEngineState extends ConsumerState<BlockStepEngine> {
         break;
     }
 
-    // While an answer is out for AI grading the button is inert and spins —
-    // the student gets a visible "working" signal instead of a dead tap.
-    if (_isEvaluatingWithAi) {
-      return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-        decoration: BoxDecoration(
-          color: AppColors.primaryDark,
-          borderRadius: AppDecorations.radiusM,
-        ),
-        child: const SizedBox(
-          width: 20,
-          height: 20,
-          child: CircularProgressIndicator(
-            strokeWidth: 2,
-            valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-          ),
-        ),
-      );
-    }
+    // The in-flight grading state is not drawn here: it takes the whole row —
+    // see _buildStepBottomRow.
 
     // If we have a text label, show a pill button
     if (label != null) {

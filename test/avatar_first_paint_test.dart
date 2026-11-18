@@ -115,6 +115,29 @@ class _HangingRemote implements AvatarRemoteDataSource {
       ApiResult.failure('unreachable');
 }
 
+/// An API that answers only when the test says so — the catalog fetch of a
+/// first run that takes longer than the screen is willing to wait.
+class _GatedRemote extends _CountingRemote {
+  final gate = Completer<void>();
+
+  _GatedRemote(super.catalog);
+
+  @override
+  Future<ApiResult<List<AvatarItem>>> getCatalog() async {
+    await gate.future;
+    return super.getCatalog();
+  }
+}
+
+Future<void> _activateUser(AppDatabase db) => db.createAndActivateUser(
+      const UsersTableCompanion(
+        id: Value(_userId),
+        email: Value('a@b.test'),
+        name: Value('Tester'),
+        isActive: Value(true),
+      ),
+    );
+
 /// A catalog already on the device, artwork and all.
 Future<void> _seedCachedCatalog(AppDatabase db) async {
   await db.upsertAvatarItem(
@@ -222,5 +245,73 @@ void main() {
       isTrue,
       reason: 'the cached artwork is what the step draws while the fetch runs',
     );
+  });
+
+  // BR-QFW7WF: with the API down, every request sat ~15 s on a 502 from the
+  // proxy and was then retried once, so a first run — nothing cached, so the
+  // shop waits for the network — showed its spinner for half a minute and
+  // more, which reads as loading forever.
+  group('a first run with no cached catalog', () {
+    test('stops waiting for a catalog that never comes', () async {
+      await _activateUser(db);
+
+      final container = ProviderContainer(
+        overrides: [
+          appDatabaseProvider.overrideWithValue(db),
+          avatarRemoteDataSourceProvider.overrideWithValue(_HangingRemote()),
+          avatarFirstLoadTimeoutProvider
+              .overrideWithValue(const Duration(milliseconds: 50)),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      final state = await container
+          .read(avatarControllerProvider.future)
+          .timeout(const Duration(seconds: 2));
+
+      expect(state.fromCache, isTrue,
+          reason: 'the shop must be able to tell the catalog never arrived');
+      expect(state.catalog.where((i) => !i.isDefault), isEmpty);
+      expect(
+        state.equippedLayers,
+        isNotEmpty,
+        reason: 'the bundled starting outfit still gives the avatar a face',
+      );
+    });
+
+    test('still shows the catalog once a slow fetch lands', () async {
+      await _activateUser(db);
+
+      final remote = _GatedRemote([_item('head_crown')]);
+      final container = ProviderContainer(
+        overrides: [
+          appDatabaseProvider.overrideWithValue(db),
+          avatarRemoteDataSourceProvider.overrideWithValue(remote),
+          avatarFirstLoadTimeoutProvider
+              .overrideWithValue(const Duration(milliseconds: 50)),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      final first = await container
+          .read(avatarControllerProvider.future)
+          .timeout(const Duration(seconds: 2));
+      expect(first.byCode['head_crown'], isNull);
+
+      final landed = Completer<AvatarState>();
+      container.listen<AsyncValue<AvatarState>>(avatarControllerProvider,
+          (_, next) {
+        final value = next.valueOrNull;
+        if (value != null && value.byCode.containsKey('head_crown')) {
+          if (!landed.isCompleted) landed.complete(value);
+        }
+      });
+
+      remote.gate.complete();
+      final state = await landed.future.timeout(const Duration(seconds: 2));
+
+      expect(state.fromCache, isFalse);
+      expect(state.byCode['head_crown']?.isDrawable, isTrue);
+    });
   });
 }

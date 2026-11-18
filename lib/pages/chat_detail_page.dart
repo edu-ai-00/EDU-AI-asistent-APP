@@ -15,12 +15,24 @@ import '../widgets/detail_shell.dart';
 
 /// Chat Detail Page for individual conversation
 class ChatDetailPage extends ConsumerStatefulWidget {
+  /// The conversation to show. Empty for a new chat: the session is created
+  /// when the student sends the first message, so a chat they leave without
+  /// typing leaves nothing behind in the history (Rule 11.6, BR-ESXSZY).
   final String sessionId;
   final String sessionTitle;
   final ChatPersona persona;
 
+  /// The mentor a new chat is created with. [persona] maps every mentor this
+  /// build does not know to aiTeacher, so a mentor added in the admin has to
+  /// be passed by slug. Defaults to [persona]'s id.
+  final String? mentorSlug;
+
+  /// Called with the local id of the session a new chat created on its first
+  /// message.
+  final ValueChanged<String>? onSessionCreated;
+
   /// Optional task context for a chat opened from a block. When set with an
-  /// empty sessionId, a new session is created and the conversation opens with
+  /// empty sessionId, the conversation opens straight away with
   /// [initialQuestion].
   ///
   /// It rides along as the hidden `message_type: context` message, the same
@@ -44,6 +56,8 @@ class ChatDetailPage extends ConsumerStatefulWidget {
     required this.sessionId,
     required this.sessionTitle,
     required this.persona,
+    this.mentorSlug,
+    this.onSessionCreated,
     this.initialContext,
     this.initialQuestion,
     this.embedded = false,
@@ -72,31 +86,37 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
       if (hasText != _hasText) setState(() => _hasText = hasText);
     });
 
-    // If opened with context (from block), create session and auto-send
+    // Opened from a block: open the conversation with the student's question;
+    // the task context goes along hidden. After the first frame, because
+    // sending marks the page busy and initState cannot rebuild it.
     if (widget.initialContext != null && _effectiveSessionId == null) {
-      _createSessionAndSendContext();
-    }
-  }
-
-  Future<void> _createSessionAndSendContext() async {
-    try {
-      final chatRepo = ref.read(chatRepositoryProvider);
-      final user = await ref.read(activeUserProvider.future);
-      if (user == null) return;
-
-      final session = await chatRepo.createSession(user.id, widget.persona.id);
-      _effectiveSessionId = session.id;
-      if (mounted) setState(() {});
-
-      // Open the conversation with the student's question; the task context
-      // goes along hidden.
-      if (widget.initialContext != null && _effectiveSessionId != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
         _sendMessage(
           widget.initialQuestion ?? AppStrings.chatContextOpeningQuestion,
           widget.initialContext,
         );
-      }
-    } catch (e, st) { silentLog('chat_detail_page', e, st); }
+      });
+    }
+  }
+
+  /// Creates the session a new chat's first message goes to. Null when it
+  /// could not be created — offline, or the server turned the mentor down.
+  Future<String?> _createSession() async {
+    try {
+      final user = await ref.read(activeUserProvider.future);
+      if (user == null) return null;
+
+      final session = await ref
+          .read(chatRepositoryProvider)
+          .createSession(user.id, widget.mentorSlug ?? widget.persona.id);
+      if (mounted) setState(() => _effectiveSessionId = session.id);
+      widget.onSessionCreated?.call(session.id);
+      return session.id;
+    } catch (e, st) {
+      silentLog('chat_detail_page', e, st);
+      return null;
+    }
   }
 
   @override
@@ -113,15 +133,30 @@ class _ChatDetailPageState extends ConsumerState<ChatDetailPage> {
   ///
   /// [taskContext] is the hidden task context that goes with the opening
   /// question only; the server keeps it out of the transcript.
-  void _sendMessage([String? question, String? taskContext]) {
+  ///
+  /// The first message of a new chat creates its session.
+  Future<void> _sendMessage([String? question, String? taskContext]) async {
     final typed = question ?? _messageController.text;
     if (typed.trim().isEmpty || _isStreaming || _isOffline) return;
-    final sessionId = _effectiveSessionId;
-    if (sessionId == null) return;
     final content = typed.trim();
     _messageController.clear();
 
     setState(() => _isStreaming = true);
+
+    final sessionId = _effectiveSessionId ?? await _createSession();
+    if (!mounted) return;
+    if (sessionId == null) {
+      setState(() => _isStreaming = false);
+      // Hand the student their text back rather than losing it.
+      if (question == null) _messageController.text = typed;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(AppStrings.chatRequiresInternet),
+          backgroundColor: Colors.red.shade700,
+        ),
+      );
+      return;
+    }
 
     final chatRepo = ref.read(chatRepositoryProvider);
     _streamSub =

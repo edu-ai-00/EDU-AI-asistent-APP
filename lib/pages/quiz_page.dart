@@ -64,7 +64,8 @@ class QuizProgress {
   /// The questions the indices above point into, when the launcher drew them
   /// rather than asking every question (a course's Kvíz, BR-WRMW7W). Survives
   /// [reset]: a retry inside QuizPage asks the same questions again, and the
-  /// answers it saves back still index into this list.
+  /// answers it saves back still index into this list. Closing a finished run
+  /// drops it with the answers (BR-TUXYXC).
   List<ContentBlock>? questionBlocks;
 
   void reset() {
@@ -165,6 +166,22 @@ class _QuizPageState extends ConsumerState<QuizPage> {
   /// True while an open answer is out for AI evaluation; blocks re-submission.
   bool _isEvaluatingWithAi = false;
 
+  // ─── Open answers graded after moving on (BR-5Q4MA3), by question index ───
+
+  /// Background gradings a V2 block announced before completing.
+  final Map<int, Future<BlockGrading>> _deferredGradings = {};
+
+  /// One token per completion of a question, so a grading that lands after
+  /// the student went back and answered again cannot overwrite the new answer.
+  final Map<int, Object> _completionTokens = {};
+
+  /// Bookkeeping still waiting on a verdict. The attempt is not submitted
+  /// until it has run, or it would go out without those answers' grades.
+  final Set<Future<void>> _pendingGradings = {};
+
+  /// The quiz is finished and waiting on [_pendingGradings].
+  bool _isSettlingGradings = false;
+
   // ─── Photographed answers + retry (BR-P745Q8), by question index ──────────
 
   /// Why the last evaluation produced nothing. Present means the student is
@@ -214,6 +231,14 @@ class _QuizPageState extends ConsumerState<QuizPage> {
   // that one gates the *submission*, this one only stops two overlapping runs
   // of the finish sequence, so a retry can still reach the feedback popup.
   bool _isCompleting = false;
+
+  /// The page is closing on a finished run — the student left the feedback
+  /// popup with "Hotovo", or a once-only quiz was finalized on the way out.
+  /// There is nothing to resume, so [_saveProgress] empties the caller's
+  /// progress instead of saving the run into it: the next launch draws a new
+  /// set rather than reopening this one on its last card (BR-TUXYXC). Unlike
+  /// [_hasSubmittedAttempt] it is never set while a retry is still running.
+  bool _isRunClosed = false;
 
   /// Student ELO profile as it stood immediately before this block's first ELO
   /// update. Captured lazily inside [_updateElo] rather than in initState so it
@@ -500,7 +525,7 @@ class _QuizPageState extends ConsumerState<QuizPage> {
 
   Widget _buildCardActionButtons(int index) {
     final block = widget.questionBlocks[index];
-    final showHint = block.hasHint;
+    final showHint = block.hasHintOrHelp;
     // Hide the AI-mentor robot in practice contexts (BR-ZDYA83); keep it for
     // real course quizzes/exercises.
     final showMentor = widget.evaluate && !_selfRateDisplays;
@@ -530,7 +555,7 @@ class _QuizPageState extends ConsumerState<QuizPage> {
                 _actionButton(
                   icon: Icons.help_outline,
                   isActive: false,
-                  // Matches the `block.hasHint` gate above: this row belongs
+                  // Matches the `block.hasHintOrHelp` gate above: this row belongs
                   // to cards the step engine does not drive, so the block's own
                   // cursor is the only step on offer.
                   onTap: () => _showHintBottomSheet(block,
@@ -575,6 +600,13 @@ class _QuizPageState extends ConsumerState<QuizPage> {
   void _saveProgress() {
     final p = widget.progress;
     if (p == null) return;
+    if (_isRunClosed) {
+      // The draw goes too: it is only pinned while a run holds answers.
+      p
+        ..reset()
+        ..questionBlocks = null;
+      return;
+    }
     p.currentIndex = _currentQuestionIndex;
     p.correctAnswers = _correctAnswers;
     p.selectedAnswers
@@ -833,7 +865,7 @@ class _QuizPageState extends ConsumerState<QuizPage> {
     } else if (hintLevel >= 1) {
       eloScore = eloScore.clamp(0.0, 0.75);
     }
-    if (!gamed) _updateElo(block, eloScore);
+    if (!gamed) _updateElo(block, eloScore, _currentQuestionIndex);
 
     // FSRS practice: grade this block and reschedule its card.
     if (widget.isFsrsPractice && !gamed) {
@@ -855,6 +887,89 @@ class _QuizPageState extends ConsumerState<QuizPage> {
         if (mounted) _goToNextQuestion();
       });
     }
+  }
+
+  /// Book a finished V2 (step-engine) block: answered/correct flags, ELO,
+  /// FSRS and the resumable progress.
+  void _recordV2Completion(int index, double scoreKoef, DateTime answeredAt) {
+    final block = widget.questionBlocks[index];
+    final wasAnswered = _answeredFlags[index] ?? false;
+    final wasCorrect = _correctFlags[index] ?? false;
+    final isNowCorrect = scoreKoef >= 1.0;
+    // Same gaming filter as _applyCheckedAnswer — completing a whole
+    // step block under the threshold is guessing all the same.
+    final gamed = isGamingAttempt(
+      openedAt: _questionOpenedAt[index],
+      answeredAt: answeredAt,
+      referenceTimesSeconds: _gamingReference[block.blockId] ?? const [],
+    );
+    setState(() {
+      _answeredFlags[index] = true;
+      _correctFlags[index] = isNowCorrect;
+      _gamedFlags[index] = gamed;
+      _answerTimestamps[index] = answeredAt;
+      if (!wasAnswered) {
+        _answeredQuestions++;
+        if (isNowCorrect) _correctAnswers++;
+      } else {
+        // Re-answer: adjust correct count
+        if (wasCorrect && !isNowCorrect) _correctAnswers--;
+        if (!wasCorrect && isNowCorrect) _correctAnswers++;
+      }
+    });
+    // Update ELO for quiz mode — apply hint/help penalty
+    double eloScore = scoreKoef;
+    final hintLevel = _hintUsage[index] ?? 0;
+    if (hintLevel >= 2) {
+      eloScore = eloScore.clamp(0.0, 0.5);
+    } else if (hintLevel >= 1) {
+      eloScore = eloScore.clamp(0.0, 0.75);
+    }
+    if (!gamed) {
+      _updateElo(block, eloScore, index);
+    }
+    // FSRS practice: V2 (step-engine) blocks complete through this
+    // callback, not _checkAnswer, so grade + reschedule the card here
+    // too — without this, V2 exercise cards were never reviewed and
+    // stayed due forever.
+    if (widget.isFsrsPractice && !gamed) {
+      _recordFsrsReview(
+        block: block,
+        index: index,
+        isCorrect: isNowCorrect,
+        hintLevel: hintLevel,
+      );
+    }
+    _persistPartialProgress();
+  }
+
+  /// [_recordV2Completion] for a block whose open answer is still being
+  /// graded (BR-5Q4MA3). The student is on the next question by now; the
+  /// answer still counts from the moment it was given.
+  void _recordV2CompletionWhenGraded(
+    int index,
+    Future<BlockGrading> grading,
+    DateTime answeredAt,
+    Object token,
+  ) {
+    Future<void> settle() async {
+      try {
+        final outcome = await grading;
+        // Gone, or answered again since — the newer attempt is the one that
+        // counts.
+        if (!mounted || !identical(_completionTokens[index], token)) return;
+        // The engine that graded it was replaced by the next question, so
+        // its verdict arrives here rather than through onStepProgress.
+        _v2Progress[index] = outcome.progress;
+        _recordV2Completion(index, outcome.scoreKoef, answeredAt);
+      } catch (e, st) {
+        silentLog('quiz_page:deferred_grading', e, st);
+      }
+    }
+
+    final pending = settle();
+    _pendingGradings.add(pending);
+    unawaited(pending.whenComplete(() => _pendingGradings.remove(pending)));
   }
 
   /// Auto-bookmark an exercise block on wrong answer so it lands in Cvičení
@@ -968,7 +1083,7 @@ class _QuizPageState extends ConsumerState<QuizPage> {
     final index = _currentQuestionIndex;
     // "Připomeň" (rating 2) = "remind me": open the hint before continuing,
     // if the block has one (BR-ZDYA83). The rating is still recorded after.
-    if (rating == 2 && block.hasHint) {
+    if (rating == 2 && block.hasHintOrHelp) {
       await _showHintBottomSheet(block, stepId: block.currentStep?.stepId);
       if (!mounted) return;
     }
@@ -1426,8 +1541,7 @@ class _QuizPageState extends ConsumerState<QuizPage> {
   /// its own hint/help overrides the block's shared one (BR-JHDNB3). Null for
   /// atomic blocks, which have no steps.
   Future<void> _showHintBottomSheet(ContentBlock block, {String? stepId}) async {
-    final hint = block.hintForStep(stepId);
-    if (hint == null || hint.isEmpty) return;
+    if (!block.hasHintOrHelpForStep(stepId)) return;
 
     final idx = _currentQuestionIndex;
     final blockId = block.blockId;
@@ -1539,7 +1653,7 @@ class _QuizPageState extends ConsumerState<QuizPage> {
     } else {
       blockContent = block.displayContent;
     }
-    // Drop media links before the 400-char budget is measured (BR-KFHPAR).
+    // Drop media links before the budget is measured (BR-KFHPAR).
     blockContent = sanitizeAiContext(blockContent);
 
     // For question blocks, include question and options
@@ -1566,7 +1680,9 @@ class _QuizPageState extends ConsumerState<QuizPage> {
     final contextParts = <String>[
       AppStrings.chatContextHelpIntro(courseName),
       '',
-      if (blockContent.isNotEmpty) AppStrings.chatContextHelpTaskContent(blockContent.length > 400 ? '${blockContent.substring(0, 400)}...' : blockContent),
+      if (blockContent.isNotEmpty)
+        AppStrings.chatContextHelpTaskContent(
+            limitAiContext(blockContent, kAiTaskContentMaxChars)),
       if (questionInfo.isNotEmpty) questionInfo,
       if (hint.isNotEmpty) AppStrings.chatContextHelpHint(hint),
       if (help.isNotEmpty) AppStrings.chatContextHelpDetail(help),
@@ -1575,9 +1691,14 @@ class _QuizPageState extends ConsumerState<QuizPage> {
         studentMessage,
       if (includeClosingPrompt) AppStrings.chatContextFallbackPrompt,
     ];
-    return contextParts
-        .where((s) => s.isNotEmpty || contextParts.indexOf(s) == 1)
-        .join('\n');
+    // Backstop: the API rejects a context field over 8000 characters outright,
+    // so a freak block cannot turn a truncated prompt into no answer at all.
+    return limitAiContext(
+      contextParts
+          .where((s) => s.isNotEmpty || contextParts.indexOf(s) == 1)
+          .join('\n'),
+      kAiContextMaxChars,
+    );
   }
 
   /// Open the full AI chat page with context about the current quiz block.
@@ -1648,7 +1769,10 @@ class _QuizPageState extends ConsumerState<QuizPage> {
       await courseRepo.updateProgress(
         id: userCourse.id,
         addTimeSpentSeconds: timeSpent,
-        status: isQuizOnly ? UserCourseStatus.completed : null,
+        status: statusAfterCourseQuiz(
+          courseData: courseDataMap,
+          currentStatus: userCourse.status,
+        ),
         progressPercent: isQuizOnly ? 100 : null,
         progressData: {
           ...existing,
@@ -1671,6 +1795,15 @@ class _QuizPageState extends ConsumerState<QuizPage> {
     if (_isCompleting) return;
     _isCompleting = true;
     try {
+      // Open answers graded in the background (BR-5Q4MA3): the attempt, the
+      // saved score and the ELO summary all need their verdicts.
+      if (_pendingGradings.isNotEmpty) {
+        setState(() => _isSettlingGradings = true);
+        await Future.wait(_pendingGradings.toList());
+        if (!mounted) return;
+        setState(() => _isSettlingGradings = false);
+      }
+
       // Quiz-attempt submission / progress / trophy are course-quiz concerns —
       // skip them for a cross-course FSRS practice session. Guarded separately
       // so a retry still reaches the feedback popup below.
@@ -1770,7 +1903,11 @@ class _QuizPageState extends ConsumerState<QuizPage> {
                     ? AppStrings.quizAllCorrect
                     : mostCorrect
                         ? AppStrings.quizGreatJob
-                        : AppStrings.quizTryAgain,
+                        // Practice offers no retry button (see canRetry), so
+                        // "Zkus to znovu!" would point at nothing (BR-83CDA8).
+                        : widget.isFsrsPractice
+                            ? null
+                            : AppStrings.quizTryAgain,
         icon: !widget.evaluate
             ? Icons.check_circle_outline
             : !hasQuestions
@@ -1807,6 +1944,7 @@ class _QuizPageState extends ConsumerState<QuizPage> {
         xpEarned: widget.isFsrsPractice ? _fsrsXpEarned : null,
         aiCommentFuture: aiCommentFuture,
         onDone: () {
+          _isRunClosed = true;
           Navigator.pop(doneCtx);
           if (mounted) pageNavigator.pop(true);
         },
@@ -1952,8 +2090,9 @@ class _QuizPageState extends ConsumerState<QuizPage> {
     widget.progress?.reset();
   }
 
-  /// Update ELO profile after a block is answered (Kvíz only).
-  Future<void> _updateElo(ContentBlock block, double score) async {
+  /// Update ELO profile after a block is answered (Kvíz only). [index] is the
+  /// answered question's position in the quiz.
+  Future<void> _updateElo(ContentBlock block, double score, int index) async {
     if (!_isQuizMode) return;
 
     final relationVector = block.gpf?.relationVector;
@@ -1967,6 +2106,18 @@ class _QuizPageState extends ConsumerState<QuizPage> {
     // Read up front: the catch below can run after the page is gone.
     final eloFailureReporter = ref.read(eloFailureReporterProvider);
     final courseId = widget.courseId;
+
+    // Also before the first await: the quiz moves on to the next question in
+    // the frame after the answer (always for V2 blocks, without evaluation
+    // for the rest), long before the database answers. Read after the awaits,
+    // the timing was the next question's open time and "now" — Otevřeno =
+    // Potvrzeno and 0 s on every quiz row of the ELO export (BR-PTSQDD).
+    final openedAt = _questionOpenedAt[index];
+    final confirmedAt = (_answerTimestamps[index] ?? DateTime.now()).toUtc();
+    final durationMs = openedAt != null
+        ? confirmedAt.difference(openedAt).inMilliseconds.clamp(0, 1 << 31)
+        : null;
+    final hintLevel = _hintUsage[index] ?? 0;
 
     try {
       final eloRepo = ref.read(eloRepositoryProvider);
@@ -2012,12 +2163,6 @@ class _QuizPageState extends ConsumerState<QuizPage> {
         },
       );
 
-      final openedAt = _questionOpenedAt[_currentQuestionIndex];
-      final confirmedAt = (_answerTimestamps[_currentQuestionIndex] ?? DateTime.now()).toUtc();
-      final durationMs = openedAt != null
-          ? confirmedAt.difference(openedAt).inMilliseconds.clamp(0, 1 << 31)
-          : null;
-
       // The queue id doubles as the server's idempotency key, so a re-sent
       // answer never moves D twice.
       final interactionId = const Uuid().v4();
@@ -2030,8 +2175,8 @@ class _QuizPageState extends ConsumerState<QuizPage> {
           'course_id': widget.courseId,
           'source': 'quiz',
           'score': score,
-          'hint_used': (_hintUsage[_currentQuestionIndex] ?? 0) >= 1,
-          'help_used': (_hintUsage[_currentQuestionIndex] ?? 0) >= 2,
+          'hint_used': hintLevel >= 1,
+          'help_used': hintLevel >= 2,
           'profil_elo_snapshot': result.profilElo,
           ...taskCalibrationFields(
             clientUuid: interactionId,
@@ -2167,6 +2312,7 @@ class _QuizPageState extends ConsumerState<QuizPage> {
         await _saveQuizProgressLocally();
       }
     }
+    _isRunClosed = true;
     if (mounted) Navigator.of(context).pop(true);
   }
 
@@ -2225,6 +2371,12 @@ class _QuizPageState extends ConsumerState<QuizPage> {
       // Reset currentStepIndex to 0 so _skipToNextQuestion finds the first
       // evaluation step — using the saved index could land on a trailing
       // non-evaluation step, causing the engine to auto-complete immediately.
+      // The score starts from zero too (BR-VZV2JA): the answers are unchecked
+      // again, so only the re-confirmation may earn it. Left out, the model's
+      // 1.0 default became the engine's best score and every wrong answer
+      // counted as correct — and since BR-PW5EQK this runs on the first visit
+      // as well, because the engine reports a pick before it is checked.
+      final questionIndex = _currentQuestionIndex;
       final savedProg = _v2Progress[_currentQuestionIndex];
       StepProgressData? effectiveSaved;
       if (savedProg != null) {
@@ -2234,6 +2386,7 @@ class _QuizPageState extends ConsumerState<QuizPage> {
           stepAnswers: savedProg.stepAnswers.map((key, value) =>
               MapEntry(key, value.copyWith(isAnswered: false))),
           isBlockCompleted: false,
+          bestScoreKoef: 0.0,
         );
       }
       return BlockStepEngine(
@@ -2253,58 +2406,21 @@ class _QuizPageState extends ConsumerState<QuizPage> {
         onStepProgress: (data) {
           _v2Progress[_currentQuestionIndex] = data;
         },
+        onGradingDeferred: (grading) =>
+            _deferredGradings[questionIndex] = grading,
         onBlockCompleted: ({int earnedXp = 0, double scoreKoef = 1.0, String? mark, DateTime? tsBubbleOpen, DateTime? tsAnswerClick, DateTime? tsAnswerSubmit, int attemptCount = 0}) {
-          final wasAnswered = _answeredFlags[_currentQuestionIndex] ?? false;
-          final wasCorrect = _correctFlags[_currentQuestionIndex] ?? false;
-          final isNowCorrect = scoreKoef >= 1.0;
-          // Same gaming filter as _applyCheckedAnswer — completing a whole
-          // step block under the threshold is guessing all the same.
           final answeredAt = DateTime.now();
-          final gamed = isGamingAttempt(
-            openedAt: _questionOpenedAt[_currentQuestionIndex],
-            answeredAt: answeredAt,
-            referenceTimesSeconds: _gamingReference[
-                    widget.questionBlocks[_currentQuestionIndex].blockId] ??
-                const [],
-          );
-          setState(() {
-            _answeredFlags[_currentQuestionIndex] = true;
-            _correctFlags[_currentQuestionIndex] = isNowCorrect;
-            _gamedFlags[_currentQuestionIndex] = gamed;
-            _answerTimestamps[_currentQuestionIndex] = answeredAt;
-            if (!wasAnswered) {
-              _answeredQuestions++;
-              if (isNowCorrect) _correctAnswers++;
-            } else {
-              // Re-answer: adjust correct count
-              if (wasCorrect && !isNowCorrect) _correctAnswers--;
-              if (!wasCorrect && isNowCorrect) _correctAnswers++;
-            }
-          });
-          // Update ELO for quiz mode — apply hint/help penalty
-          double eloScore = scoreKoef;
-          final hintLevel = _hintUsage[_currentQuestionIndex] ?? 0;
-          if (hintLevel >= 2) {
-            eloScore = eloScore.clamp(0.0, 0.5);
-          } else if (hintLevel >= 1) {
-            eloScore = eloScore.clamp(0.0, 0.75);
+          final token = Object();
+          _completionTokens[questionIndex] = token;
+          // An open answer still being graded (BR-5Q4MA3): the student moves
+          // on now, the score is booked once the verdict is in.
+          final grading = _deferredGradings.remove(questionIndex);
+          if (grading == null) {
+            _recordV2Completion(questionIndex, scoreKoef, answeredAt);
+          } else {
+            _recordV2CompletionWhenGraded(
+                questionIndex, grading, answeredAt, token);
           }
-          if (!gamed) {
-            _updateElo(widget.questionBlocks[_currentQuestionIndex], eloScore);
-          }
-          // FSRS practice: V2 (step-engine) blocks complete through this
-          // callback, not _checkAnswer, so grade + reschedule the card here
-          // too — without this, V2 exercise cards were never reviewed and
-          // stayed due forever.
-          if (widget.isFsrsPractice && !gamed) {
-            _recordFsrsReview(
-              block: widget.questionBlocks[_currentQuestionIndex],
-              index: _currentQuestionIndex,
-              isCorrect: isNowCorrect,
-              hintLevel: hintLevel,
-            );
-          }
-          _persistPartialProgress();
           // Auto-advance: when show_answers=false there's no feedback,
           // and when evaluate=true the user already saw solution via "Pokračovat".
           if (_currentBlockHidesAnswers || widget.evaluate) {
@@ -2796,7 +2912,13 @@ class _QuizPageState extends ConsumerState<QuizPage> {
     // here: V2 steps through the engine controller, atomic open questions
     // through _isEvaluatingWithAi.
     if (_isEvaluatingWithAi || _engineController.isEvaluating) {
-      return _buildEvaluatingBottomBar();
+      return _buildEvaluatingBottomBar(AppStrings.openFeedbackEvaluating);
+    }
+    // The last answers' background grading (BR-5Q4MA3) is all the finished
+    // quiz is waiting on — not "thinking about your answer", which this mode
+    // exists to stop saying.
+    if (_isSettlingGradings) {
+      return _buildEvaluatingBottomBar(AppStrings.quizSubmitting);
     }
 
     // Display blocks can always proceed (no answer needed).
@@ -2895,7 +3017,10 @@ class _QuizPageState extends ConsumerState<QuizPage> {
   /// the call is in flight. Dropping the arrow is deliberate — leaving the
   /// question mid-call would strand the engine controller's evaluating flag on
   /// the next question, and there is nothing useful to go back to anyway.
-  Widget _buildEvaluatingBottomBar() {
+  ///
+  /// [label] says what is being waited on: the answer on screen, or a finished
+  /// quiz's background gradings (BR-5Q4MA3).
+  Widget _buildEvaluatingBottomBar(String label) {
     return _bottomBarShell(
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 16),
@@ -2917,7 +3042,7 @@ class _QuizPageState extends ConsumerState<QuizPage> {
             const SizedBox(width: 12),
             Flexible(
               child: Text(
-                AppStrings.openFeedbackEvaluating,
+                label,
                 textAlign: TextAlign.center,
                 overflow: TextOverflow.ellipsis,
                 style: AppTextStyles.statValue(color: Colors.white),
