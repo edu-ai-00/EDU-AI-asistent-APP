@@ -267,6 +267,107 @@ void main() {
     expect(find.text('Zkontrolovat'), findsOneWidget);
   });
 
+  // BR-3DWDTT: Enter in a field submitted the block straight past the
+  // inactive "Zkontrolovat" button — the blank questions were graded wrong,
+  // and a block with nothing filled in at all ended on 0 points.
+  group('Enter only submits when "Zkontrolovat" would', () {
+    testWidgets('batch block: Enter with blank questions grades nothing',
+        (tester) async {
+      final completion = _Completion();
+      await tester.pumpWidget(_wrap(_threeQuestionBlock(), completion));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField).at(0), '24');
+      await tester.pumpAndSettle();
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      // Nothing evaluated: no solutions, every field still open.
+      expect(find.text('Reseni s1'), findsNothing);
+      expect(find.text('Reseni s2'), findsNothing);
+      for (var i = 0; i < 3; i++) {
+        expect(tester.widget<TextField>(find.byType(TextField).at(i)).enabled,
+            isTrue);
+      }
+      expect(completion.done, isFalse);
+
+      // Once every question is filled, Enter does what the button does.
+      await tester.enterText(find.byType(TextField).at(1), '3');
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField).at(2), '1');
+      await tester.pumpAndSettle();
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Reseni s1'), findsOneWidget);
+      expect(find.text('Reseni s2'), findsOneWidget);
+      expect(find.text('Reseni s3'), findsOneWidget);
+    });
+
+    testWidgets('batch block: Enter in an empty block does not end it on 0',
+        (tester) async {
+      final completion = _Completion();
+      // No solutions to show, so an evaluation would complete the block on
+      // the spot — the 0-point ending from the report.
+      await tester.pumpWidget(
+          _wrap(_threeQuestionBlock(withSolutions: false), completion));
+      await tester.pumpAndSettle();
+
+      await tester.showKeyboard(find.byType(TextField).at(0));
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      expect(completion.done, isFalse);
+      expect(tester.widget<TextField>(find.byType(TextField).at(0)).enabled,
+          isTrue);
+    });
+
+    testWidgets('one-at-a-time block: Enter waits for every question',
+        (tester) async {
+      final completion = _Completion();
+      // The open question keeps the block out of batch grading (BR-N26ACB).
+      final block = ContentBlock.fromJson({
+        'block_id': 'TEST_ENTER_SEQ',
+        'type': 'exercise',
+        'steps': [
+          {
+            'id': 's1',
+            'type': 'question',
+            'order': 1,
+            'question': {
+              'type': 'open',
+              'question': 'Prvni',
+              'correct_answer': 'zaci',
+              'ai_evaluation': false,
+            },
+          },
+          {
+            'id': 's2',
+            'type': 'question',
+            'order': 2,
+            'question': {
+              'type': 'numeric',
+              'question': 'Druha',
+              'correct_number': 3,
+            },
+          },
+        ],
+      });
+      await tester.pumpWidget(_wrap(block, completion));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField).at(0), 'zaci');
+      await tester.pumpAndSettle();
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      // The first question was not graded on its own — it is still open.
+      expect(tester.widget<TextField>(find.byType(TextField).at(0)).enabled,
+          isTrue);
+      expect(completion.done, isFalse);
+    });
+  });
+
   testWidgets('single-question block keeps the old immediate flow',
       (tester) async {
     final completion = _Completion();

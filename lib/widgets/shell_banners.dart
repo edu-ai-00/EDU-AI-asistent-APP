@@ -24,9 +24,15 @@ class ShellBanners extends ConsumerWidget {
   /// pushed pages cannot reach the app-level OAuth handler.
   final ValueChanged<OAuthExchangeResult>? onOAuthSuccess;
 
+  /// Where a guest's tap on the e-mail banner goes — the same sign-up the
+  /// sidebar's register card opens, so a phone registers the way a desktop
+  /// does (BR-UMRKQ9).
+  final VoidCallback onRegisterTap;
+
   const ShellBanners({
     super.key,
     required this.onLogout,
+    required this.onRegisterTap,
     this.onConverted,
     this.onOAuthSuccess,
   });
@@ -56,7 +62,10 @@ class ShellBanners extends ConsumerWidget {
         if (isShared)
           SharedDeviceBanner(onLogout: onLogout, onConverted: onConverted),
         if (showEmailBanner && !isMinor && !guestPromptCoveredByCta)
-          EmailValidationBanner(onOAuthSuccess: onOAuthSuccess),
+          EmailValidationBanner(
+            onRegisterTap: onRegisterTap,
+            onOAuthSuccess: onOAuthSuccess,
+          ),
       ],
     );
   }

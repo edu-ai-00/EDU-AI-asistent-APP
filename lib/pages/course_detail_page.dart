@@ -4,9 +4,11 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import '../core/gamification/global_quiz_selection.dart' show representedDomains;
 import '../core/media/lesson_image_cache.dart';
 import '../core/theme/app_theme.dart';
 import '../core/strings/app_strings.dart';
+import '../core/ui/app_toast.dart';
 import '../models/course_model.dart';
 import '../models/skill_display_model.dart';
 import '../widgets/card_carousel.dart';
@@ -29,10 +31,8 @@ import 'package:eduai/core/util/silent_log.dart';
 import '../core/layout/breakpoints.dart';
 import '../core/util/shell_route.dart';
 
-/// The wide hero's action row — the course actions plus "Uložit kurz" — and
-/// the action group inside it. Named so the layout tests can measure where the
-/// two landed (BR-BCNXAP).
-const Key courseHeroActionsKey = Key('course-hero-actions');
+/// The wide hero's action group. Named so the layout tests can measure where
+/// it landed (BR-BCNXAP).
 const Key courseHeroActionButtonsKey = Key('course-hero-action-buttons');
 
 /// Course Detail Page displaying full course information
@@ -77,6 +77,10 @@ class _CourseDetailPageState extends ConsumerState<CourseDetailPage> with RouteA
   /// Selected tab of the wide layout: lessons / about / skills / stats.
   int _wideTab = 0;
 
+  /// [_courseSkillDomains] and the course it was worked out for.
+  Course? _skillDomainsCourse;
+  Set<String> _skillDomains = const {};
+
   /// Width of the course page's right-hand rail.
   static const double _railWidth = 340;
 
@@ -87,6 +91,29 @@ class _CourseDetailPageState extends ConsumerState<CourseDetailPage> with RouteA
   static const double _heroIconGap = 24;
 
   Course get _course => _courseOverride ?? widget.course;
+
+  /// GPF domain codes the course's tasks exercise (BR-2MAU65) — the relation
+  /// == 2 test the global quiz offers its domains by. Worked out once per
+  /// course object; it parses every block.
+  Set<String> get _courseSkillDomains {
+    final course = _course;
+    if (!identical(course, _skillDomainsCourse)) {
+      _skillDomainsCourse = course;
+      _skillDomains = representedDomains(course.getAllBlocks());
+    }
+    return _skillDomains;
+  }
+
+  /// The learner's skills narrowed to [_courseSkillDomains].
+  List<SkillDisplay> _courseSkills() {
+    final domains = _courseSkillDomains;
+    if (domains.isEmpty) return const [];
+    final skills = ref.watch(skillDisplayProvider).valueOrNull ?? const [];
+    return [
+      for (final skill in skills)
+        if (domains.contains(skill.id)) skill,
+    ];
+  }
 
   /// Best-known userCourseId — from widget or discovered at runtime.
   String? get _userCourseId => _resolvedUserCourseId ?? widget.userCourseId;
@@ -100,9 +127,9 @@ class _CourseDetailPageState extends ConsumerState<CourseDetailPage> with RouteA
   /// (BR-Y4WMCU), so the page itself has to say no.
   bool get _onlyOnceLocked => _course.onlyOnce && _course.isCompleted;
 
-  /// Course unlocks every lesson at once — no sequential gate, and no single
-  /// "current" lesson to badge (BR-K47WYE). A pending update or a required
-  /// entry quiz still locks everything; those are different reasons to lock.
+  /// Course unlocks every lesson at once — no sequential gate (BR-K47WYE). A
+  /// pending update or a required entry quiz still locks everything; those
+  /// are different reasons to lock.
   bool get _openAll => _course.openAllLessons;
 
   /// Whether this is a quiz-only course (no lessons shown).
@@ -234,26 +261,14 @@ class _CourseDetailPageState extends ConsumerState<CourseDetailPage> with RouteA
 
       if (userCourse == null || userCourse.courseData == null) return;
 
-      // Count completed blocks from progress data
-      int completedBlockCount = 0;
+      // Count completed blocks the course still holds. Quiz answers stand in
+      // only for a quiz-only course — a regular course's Kvíz is not lesson
+      // work.
       final lessonsProgress = userCourse.progressData['lessons'] as Map<String, dynamic>?;
-      if (lessonsProgress != null) {
-        for (final entry in lessonsProgress.entries) {
-          final lessonData = entry.value as Map<String, dynamic>?;
-          final completedBlocks = lessonData?['completed_blocks'] as List<dynamic>?;
-          completedBlockCount += completedBlocks?.length ?? 0;
-        }
-      }
-
-      // For quiz-only courses: count answered quiz questions as completed blocks
-      if (completedBlockCount == 0) {
-        final quizAnswers = userCourse.progressData['quiz_answers'] as Map<String, dynamic>?;
-        if (quizAnswers != null) {
-          completedBlockCount = quizAnswers.values
-              .where((a) => a is Map && a['is_answered'] == true)
-              .length;
-        }
-      }
+      final completedBlockCount = Course.completedBlockCount(
+        userCourse.courseData!,
+        userCourse.progressData,
+      );
 
       // Rebuild course with updated progress. Carry forward the best-known
       // title (set by the caller / current course) so a stale R2 payload
@@ -283,6 +298,12 @@ class _CourseDetailPageState extends ConsumerState<CourseDetailPage> with RouteA
           _completedBlockIds = completedIds;
           _removedPracticeBlocks = removedIds;
           _hasUpdate = userCourse!.hasUpdate;
+          // A passed entry quiz stays passed on every later visit, not only
+          // on the page that ran it (BR-MKFPU6). Never cleared: a retake in
+          // progress keeps the lessons the first pass unlocked.
+          if (userCourse.progressData['quiz_completed'] == true) {
+            _quizCompleted = true;
+          }
           _calculateTotalBlocks(); // Recalculate in case course data changed
           // The rebuilt course, not the stored status: a course completed
           // before its author added lessons is not done (BR-PHJQDK).
@@ -367,34 +388,47 @@ class _CourseDetailPageState extends ConsumerState<CourseDetailPage> with RouteA
           _isUpdating = false;
           _hasUpdate = false;
         });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(AppStrings.libraryCourseUpdated(_course.title)),
-            backgroundColor: AppColors.success,
-          ),
+        _showToast(
+          AppStrings.libraryCourseUpdated(_course.title),
+          ToastVariant.success,
         );
       }
     } catch (e) {
       if (mounted) {
         setState(() => _isUpdating = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(AppStrings.libraryCourseUpdateError('$e')),
-            backgroundColor: AppColors.error,
-          ),
+        _showToast(
+          AppStrings.libraryCourseUpdateError('$e'),
+          ToastVariant.error,
         );
       }
     }
+  }
+
+  /// Every message this page raises goes through here, at the top of the
+  /// screen. On a phone the Lekce / Cvičení / Kvíz row is pinned to the bottom
+  /// of the page's own `Stack`, which a `SnackBar` cannot see, so the bar used
+  /// to sit right on those buttons until it timed out (BR-MKQ7H6).
+  void _showToast(
+    String message,
+    ToastVariant variant, {
+    Duration duration = const Duration(seconds: 3),
+  }) {
+    showAppToast(
+      context,
+      message,
+      variant: variant,
+      duration: duration,
+      topOnCompact: true,
+    );
   }
 
   void _navigateToCurrentLesson() {
     final lessons = _nonEmptyLessons;
     if (lessons.isEmpty) return;
 
-    // Find the first in-progress lesson, or first non-completed lesson
-    int idx = lessons.indexWhere(
-      (l) => l.status == LessonStatus.inProgress,
-    );
+    // Find the first in-progress lesson (in an open-all course: one the
+    // student worked in, BR-XAWEND), or first non-completed lesson
+    int idx = lessons.indexWhere(_course.isCurrentLesson);
 
     // If no in-progress, find first non-completed
     if (idx == -1) {
@@ -795,36 +829,21 @@ class _CourseDetailPageState extends ConsumerState<CourseDetailPage> with RouteA
     if (picked != null) await _startMentorChat(picked);
   }
 
+  /// Opens a new chat with [mentor]. The first message creates the session
+  /// (Rule 11.6), so backing out without typing leaves no empty chat in the
+  /// history (BR-ESXSZY).
   Future<void> _startMentorChat(ChatMentor mentor) async {
-    try {
-      final user = await ref.read(activeUserProvider.future);
-      if (user == null) return;
-
-      final session = await ref
-          .read(chatRepositoryProvider)
-          .createSession(user.id, mentor.slug);
-
-      if (!mounted) return;
-      Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => ChatDetailPage(
-            sessionId: session.id,
-            sessionTitle:
-                session.title.isNotEmpty ? session.title : mentor.name,
-            persona: mentor.persona,
-          ),
+    if (!mounted) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ChatDetailPage(
+          sessionId: '',
+          sessionTitle: mentor.name,
+          persona: mentor.persona,
+          mentorSlug: mentor.slug,
         ),
-      );
-    } catch (e, st) {
-      silentLog('course_detail_page', e, st);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(AppStrings.chatRequiresInternet),
-          backgroundColor: Colors.red.shade700,
-        ),
-      );
-    }
+      ),
+    );
   }
 
   Widget _buildSkillsButton() {
@@ -858,7 +877,8 @@ class _CourseDetailPageState extends ConsumerState<CourseDetailPage> with RouteA
   Future<void> _navigateToSkills() async {
     final stats = ref.read(userStatsProvider).valueOrNull;
     final config = ref.read(gamificationConfigProvider).valueOrNull;
-    final earnedIds = ref.read(earnedAchievementsProvider).valueOrNull ?? <String>[];
+    final earnedIds =
+        await readEarnedAchievementIds(ref.read(appDatabaseProvider));
 
     ref.invalidate(skillDisplayProvider);
     final skills = await ref.read(skillDisplayProvider.future);
@@ -883,7 +903,7 @@ class _CourseDetailPageState extends ConsumerState<CourseDetailPage> with RouteA
           coursesCompleted: counts.courses,
           quizzesCompleted: counts.quizzes,
           config: config,
-          earnedIds: earnedIds.toSet(),
+          earnedIds: earnedIds,
           skills: skills,
           scrollToSkills: true,
         ),
@@ -1236,8 +1256,8 @@ class _CourseDetailPageState extends ConsumerState<CourseDetailPage> with RouteA
       iconColor = null;
     }
 
-    final isInProgress = !_quizRequired && !_hasUpdate && !_openAll &&
-        lesson.status == LessonStatus.inProgress;
+    final isInProgress =
+        !_quizRequired && !_hasUpdate && _course.isCurrentLesson(lesson);
     final isLocked = _quizRequired || _hasUpdate ||
         (!_openAll && lesson.status == LessonStatus.locked);
 
@@ -1798,25 +1818,10 @@ class _CourseDetailPageState extends ConsumerState<CourseDetailPage> with RouteA
     final exerciseBlocks = _exerciseBlocks();
 
     if (exerciseBlocks.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Row(
-            children: [
-              const Icon(Icons.bookmark_border, color: Colors.white),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  AppStrings.courseNoBookmarks,
-                  style: AppTextStyles.subtitle(color: Colors.white),
-                ),
-              ),
-            ],
-          ),
-          backgroundColor: AppColors.primaryDark,
-          duration: const Duration(seconds: 4),
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: AppDecorations.radiusS),
-        ),
+      _showToast(
+        AppStrings.courseNoBookmarks,
+        ToastVariant.info,
+        duration: const Duration(seconds: 4),
       );
       return;
     }
@@ -1855,15 +1860,7 @@ class _CourseDetailPageState extends ConsumerState<CourseDetailPage> with RouteA
 
     if (questionBlocks.isEmpty) {
       // Show message if no questions available
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            AppStrings.courseNoQuestions,
-            style: AppTextStyles.subtitle(color: Colors.white),
-          ),
-          backgroundColor: AppColors.primaryDark,
-        ),
-      );
+      _showToast(AppStrings.courseNoQuestions, ToastVariant.info);
       return;
     }
 
@@ -1970,11 +1967,11 @@ class _CourseDetailPageState extends ConsumerState<CourseDetailPage> with RouteA
         // column once the icon tile and the gap after it are taken out.
         final inner = constraints.maxWidth - _heroPadding * 2;
         final infoWidth = inner - _heroIconSize - _heroIconGap;
-        // On tablet widths the text column is too narrow to hold the action
-        // buttons next to "Uložit kurz": the three of them split what was left
-        // until their labels ran over each other (BR-BCNXAP). Below that width
-        // the row drops under the icon and takes the hero's full width.
-        final stackActions = !heroActionRowFits(infoWidth);
+        // On tablet widths the text column is too narrow for the action
+        // buttons: the three of them split what was left until their labels ran
+        // over each other (BR-BCNXAP). Below that width the row drops under the
+        // icon and takes the hero's full width.
+        final stackActions = !heroActionsFitBesideIcon(infoWidth);
 
         return Container(
           padding: const EdgeInsets.all(_heroPadding),
@@ -2095,35 +2092,15 @@ class _CourseDetailPageState extends ConsumerState<CourseDetailPage> with RouteA
     );
   }
 
-  /// The hero's action row: the shared course actions plus "Uložit kurz".
+  /// The hero's action group, [availableWidth] being what it may occupy.
   ///
-  /// [availableWidth] is what the row may occupy. When both do not fit on one
-  /// line the save button drops to a line of its own rather than squeezing the
-  /// action buttons past the width their labels need.
+  /// Reuses the phone bottom bar's chooser so update / quiz-required /
+  /// completed states behave identically.
   Widget _buildHeroActions(double availableWidth) {
-    final besideSave = heroActionRowFits(availableWidth);
-    final actionsWidth = math.min(
-      besideSave
-          ? availableWidth - kHeroActionsGap - kHeroSaveButtonWidth
-          : availableWidth,
-      kHeroActionsMaxWidth,
-    );
-
-    return Wrap(
-      key: courseHeroActionsKey,
-      spacing: kHeroActionsGap,
-      runSpacing: kHeroActionsGap,
-      crossAxisAlignment: WrapCrossAlignment.center,
-      children: [
-        // Reuses the phone bottom bar's chooser so update / quiz-required /
-        // completed states behave identically.
-        SizedBox(
-          key: courseHeroActionButtonsKey,
-          width: actionsWidth,
-          child: _actionContent(),
-        ),
-        _buildSaveCourseButton(),
-      ],
+    return SizedBox(
+      key: courseHeroActionButtonsKey,
+      width: math.min(availableWidth, kHeroActionsMaxWidth),
+      child: _actionContent(),
     );
   }
 
@@ -2136,38 +2113,6 @@ class _CourseDetailPageState extends ConsumerState<CourseDetailPage> with RouteA
         Text(label,
             style: AppTextStyles.meta(color: AppColors.primaryDark64)),
       ],
-    );
-  }
-
-  /// Placeholder: bookmarking a whole course is not wired up (the list cards
-  /// hide their bookmark control for the same reason).
-  Widget _buildSaveCourseButton() {
-    return GestureDetector(
-      onTap: () => ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            '${AppStrings.courseSaveButton} — ${AppStrings.profileComingSoon}',
-          ),
-        ),
-      ),
-      child: Container(
-        height: 56,
-        padding: const EdgeInsets.symmetric(horizontal: 20),
-        decoration: BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: AppDecorations.radiusM,
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.bookmark_border_rounded,
-                size: 20, color: AppColors.primaryDark),
-            const SizedBox(width: 8),
-            Text(AppStrings.courseSaveButton,
-                style: AppTextStyles.actionSmall()),
-          ],
-        ),
-      ),
     );
   }
 
@@ -2310,8 +2255,7 @@ class _CourseDetailPageState extends ConsumerState<CourseDetailPage> with RouteA
     // locks everything.
     final isLocked = _quizRequired || _hasUpdate ||
         (!_openAll && lesson.status == LessonStatus.locked);
-    final isCurrent = !isLocked && !_openAll &&
-        lesson.status == LessonStatus.inProgress;
+    final isCurrent = !isLocked && _course.isCurrentLesson(lesson);
     final isDone = lesson.status == LessonStatus.completed;
 
     final Color numberBg = isCurrent
@@ -2457,8 +2401,11 @@ class _CourseDetailPageState extends ConsumerState<CourseDetailPage> with RouteA
         actionLabel: AppStrings.courseDetailedStats,
         onDetailTap: _navigateToSkills,
       ),
-      const SizedBox(height: 16),
-      _buildSkillsCard(),
+      // A course whose tasks exercise no skill has none to list (BR-2MAU65).
+      if (_courseSkillDomains.isNotEmpty) ...[
+        const SizedBox(height: 16),
+        _buildSkillsCard(),
+      ],
     ];
   }
 
@@ -2468,10 +2415,10 @@ class _CourseDetailPageState extends ConsumerState<CourseDetailPage> with RouteA
   /// no equivalent of, so it gets its own padded slot matching the surrounding
   /// sections. Hidden outright when the learner has no ELO profile yet — the
   /// provider returns an empty list only in that case, so an untouched account
-  /// doesn't grow an explanatory panel it can't act on.
+  /// doesn't grow an explanatory panel it can't act on — and when the course's
+  /// tasks exercise no skill (BR-2MAU65).
   Widget _buildSkillsSection() {
-    final skills = ref.watch(skillDisplayProvider).valueOrNull ?? const [];
-    if (skills.isEmpty) return const SizedBox.shrink();
+    if (_courseSkills().isEmpty) return const SizedBox.shrink();
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 32, 16, 0),
@@ -2512,10 +2459,19 @@ class _CourseDetailPageState extends ConsumerState<CourseDetailPage> with RouteA
 
   /// Skill rows.
   ///
-  /// These are the learner's overall ELO-derived skills, not per-course ones —
-  /// the model has no course scoping for them. Shown as-is rather than faked.
+  /// Only the domains the course's tasks exercise (BR-2MAU65); before, every
+  /// domain was listed, so the card always read Číslo, Míry, Geometrie. The
+  /// level is the learner's overall one in the domain — ELO keeps no
+  /// per-course profile.
   Widget _buildSkillsList({required int? limit}) {
-    final skills = ref.watch(skillDisplayProvider).valueOrNull ?? const [];
+    if (_courseSkillDomains.isEmpty) {
+      return Text(
+        AppStrings.courseSkillsNone,
+        style: AppTextStyles.bodySmall(color: AppColors.primaryDark64),
+      );
+    }
+
+    final skills = _courseSkills();
     if (skills.isEmpty) {
       return Text(
         AppStrings.courseSkillsEmpty,

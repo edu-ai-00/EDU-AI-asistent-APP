@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Name of the push notification channel in the system settings. -->
+    <string name="notification_channel_default_name">Oznámení</string>
+</resources>

@@ -9,6 +9,11 @@ import 'action_button.dart';
 /// Shows bookmark/like/dislike (and optionally help) on the left, confirm
 /// checkmark on the right. Question blocks use a two-tap flow:
 /// first tap evaluates ([onMarkAnswered]), second tap confirms ([onConfirm]).
+///
+/// The two taps look like BlockStepEngine's (BR-6BPJ24): the first is a
+/// "Zkontrolovat" pill, the second a white check, and the check turns green
+/// only once the block is done. An unlabeled check that went green after the
+/// first tap read as finished, so the second tap looked like a bug.
 class LessonContentActionButtonsRow extends StatelessWidget {
   final ContentBlock block;
   final bool isCurrent;
@@ -37,6 +42,13 @@ class LessonContentActionButtonsRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // An answered question that has not been checked yet: the tap checks it.
+    final awaitingCheck = isCurrent &&
+        !block.isCompleted &&
+        canConfirm &&
+        block.isQuestionBlock &&
+        !isAnswered;
+
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
@@ -68,7 +80,7 @@ class LessonContentActionButtonsRow extends StatelessWidget {
                 activeColor: AppColors.orange,
                 onTap: onDislike,
               ),
-              if (block.hasHint)
+              if (block.hasHintOrHelp)
                 LessonActionButton(
                   icon: Icons.help_outline,
                   isActive: false,
@@ -90,12 +102,35 @@ class LessonContentActionButtonsRow extends StatelessWidget {
               showAppToast(context, AppStrings.lessonSelectAnswerFirst);
             }
           },
-          child: _ConfirmCheck(
-            isCompleted: block.isCompleted,
-            isEvaluated: isAnswered,
-          ),
+          child: awaitingCheck
+              ? const _CheckPill()
+              : _ConfirmCheck(
+                  isCompleted: block.isCompleted,
+                  canContinue:
+                      isCurrent && isAnswered && block.isQuestionBlock,
+                ),
         ),
       ],
+    );
+  }
+}
+
+/// The "Zkontrolovat" pill, styled like BlockStepEngine's.
+class _CheckPill extends StatelessWidget {
+  const _CheckPill();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+      decoration: BoxDecoration(
+        color: AppColors.primaryDark,
+        borderRadius: AppDecorations.radiusM,
+      ),
+      child: Text(
+        AppStrings.lessonCheckAnswer,
+        style: AppTextStyles.statValue(color: Colors.white),
+      ),
     );
   }
 }
@@ -201,9 +236,13 @@ class LessonLegacyActionButtonsRow extends StatelessWidget {
 
 class _ConfirmCheck extends StatelessWidget {
   final bool isCompleted;
-  final bool isEvaluated;
 
-  const _ConfirmCheck({required this.isCompleted, required this.isEvaluated});
+  /// A checked question waiting for the tap that moves on: white with a dark
+  /// check, like BlockStepEngine's continue button. Green stays reserved for
+  /// a finished block (BR-6BPJ24).
+  final bool canContinue;
+
+  const _ConfirmCheck({required this.isCompleted, required this.canContinue});
 
   @override
   Widget build(BuildContext context) {
@@ -212,9 +251,9 @@ class _ConfirmCheck extends StatelessWidget {
     if (isCompleted) {
       bgColor = AppColors.success;
       iconColor = Colors.white;
-    } else if (isEvaluated) {
-      bgColor = AppColors.success;
-      iconColor = Colors.white;
+    } else if (canContinue) {
+      bgColor = AppColors.surface;
+      iconColor = AppColors.primaryDark;
     } else {
       bgColor = AppColors.surface;
       iconColor = AppColors.disabled;

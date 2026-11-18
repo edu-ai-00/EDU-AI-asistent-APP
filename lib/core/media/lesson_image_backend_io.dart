@@ -43,7 +43,11 @@ class IoLessonImageBackend implements LessonImageBackend {
       File(p.join((await _root).path, _fileName(url)));
 
   @override
-  Future<Uint8List> fetch(String url, {LessonImageProgress? onProgress}) async {
+  Future<Uint8List> fetch(
+    String url, {
+    LessonImageProgress? onProgress,
+    bool background = false,
+  }) async {
     final uri = Uri.parse(url);
     final request = await (_client ?? _sharedClient).getUrl(uri);
     final response = await request.close();

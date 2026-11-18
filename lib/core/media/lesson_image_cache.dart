@@ -5,7 +5,8 @@ import '../connectivity/connectivity_service.dart';
 import '../util/silent_log.dart';
 import 'lesson_image_backend.dart';
 import 'lesson_image_backend_stub.dart'
-    if (dart.library.io) 'lesson_image_backend_io.dart';
+    if (dart.library.io) 'lesson_image_backend_io.dart'
+    if (dart.library.js_interop) 'lesson_image_backend_web.dart';
 
 export 'lesson_image_backend.dart' show LessonImageBackend, LessonImageProgress;
 
@@ -25,8 +26,9 @@ export 'lesson_image_backend.dart' show LessonImageBackend, LessonImageProgress;
 /// for a whole course up front, so lessons that were never opened have their
 /// pictures too.
 ///
-/// Without a backend — the web build — the cache is [isSupported] false and
-/// lesson images load straight from the network as before.
+/// Native platforms keep the pictures as files, the web build in the
+/// browser's Cache Storage (BR-7XZXZD). Without a backend the cache is
+/// [isSupported] false and lesson images load straight from the network.
 class LessonImageCache {
   LessonImageCache({
     LessonImageBackend? backend,
@@ -125,7 +127,7 @@ class LessonImageCache {
         final url = queue.removeLast();
         try {
           if (await backend.contains(url)) continue;
-          await _keep(backend, url, await backend.fetch(url));
+          await _keep(backend, url, await backend.fetch(url, background: true));
         } catch (_) {
           // Skipped; the lesson tries it again when it shows the picture.
         }

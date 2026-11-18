@@ -119,10 +119,7 @@ class OpenAnswerFeedbackCard extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           if (flatText != null)
-            Text(
-              flatText!,
-              style: AppTextStyles.meta(color: AppColors.primaryDark80),
-            )
+            _AiText(flatText!)
           // The flat constructor may carry an explanation and nothing else —
           // rendering the three-part layout there would print three empty
           // headings.
@@ -170,10 +167,35 @@ class _Section extends StatelessWidget {
         children: [
           Text(label, style: AppTextStyles.metaBold()),
           const SizedBox(height: 2),
-          Text(text, style: AppTextStyles.meta(color: AppColors.primaryDark80)),
+          _AiText(text),
         ],
       ),
     );
+  }
+}
+
+/// The model's own words — one section, or the whole of a flat response.
+///
+/// Mostly plain prose, but the model copies formulas out of the question it is
+/// commenting on, in dollars or in TeX's `\(…\)` / `\[…\]`. Set as plain [Text]
+/// those printed as source (BR-4ZFY6D), so anything that looks like markdown
+/// or maths goes through the lesson's renderer, at the card's meta size.
+class _AiText extends StatelessWidget {
+  final String text;
+
+  const _AiText(this.text);
+
+  @override
+  Widget build(BuildContext context) {
+    if (looksLikeMarkdown(text) || containsBracketMath(text)) {
+      return MarkdownLatexWidget(
+        content: text,
+        textStyle: AppTextStyles.meta(),
+        textColor: AppColors.primaryDark80,
+        bracketDelimiters: true,
+      );
+    }
+    return Text(text, style: AppTextStyles.meta(color: AppColors.primaryDark80));
   }
 }
 
@@ -181,9 +203,10 @@ class _Section extends StatelessWidget {
 /// "model answer", because next to the student's own attempt that is what it
 /// reads as (BR-PM7XQ3).
 ///
-/// Separate from [_Section] because the solution is authored content and
-/// routinely carries markdown and formulas, where the AI's parts are plain
-/// prose. Passing it through [Text] printed `$a$` and list markers verbatim.
+/// Separate from [_Section] because the solution is authored content, which
+/// reads dollars only — the way the admin preview showed it to its author —
+/// where the AI's parts also take TeX's bracket delimiters. Passing it through
+/// [Text] printed `$a$` and list markers verbatim.
 class _SolutionSection extends StatelessWidget {
   final String solution;
 

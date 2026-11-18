@@ -25,12 +25,13 @@ void main() {
   /// Set [nested] to reproduce the shape that caused the bug: the desktop
   /// shells put the page's own `Scaffold` inside a window-level one, which is
   /// what pushed the snack bar out of the content pane.
-  Widget harness({bool nested = false}) {
+  Widget harness({bool nested = false, bool topOnCompact = false}) {
     final page = Scaffold(
       body: Builder(
         builder: (context) => Center(
           child: TextButton(
-            onPressed: () => showAppToast(context, message),
+            onPressed: () =>
+                showAppToast(context, message, topOnCompact: topOnCompact),
             child: const Text('confirm'),
           ),
         ),
@@ -185,6 +186,57 @@ void main() {
       final rect = tester.getRect(find.byType(SnackBar));
       // Bottom half of the screen, i.e. where a phone expects it.
       expect(rect.center.dy, greaterThan(844 / 2));
+    });
+
+    /// BR-MKQ7H6 — the course page pins its action row to the bottom of its
+    /// own `Stack`, out of the snack bar's sight, so the bar covered "Lekce".
+    testWidgets('topOnCompact moves it under the top edge instead',
+        (tester) async {
+      setViewport(tester, const Size(390, 844));
+      await tester.pumpWidget(harness(topOnCompact: true));
+
+      await tester.tap(find.text('confirm'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(SnackBar), findsNothing);
+      final rect = tester.getRect(toastCard());
+      expect(rect.top, lessThan(60));
+      expect(rect.bottom, lessThan(844 / 4));
+    });
+
+    testWidgets('topOnCompact spans a narrow phone without running off it',
+        (tester) async {
+      // Narrower than kToastMaxWidth plus the insets: a card pinned only to
+      // the right edge would hang off the left one.
+      setViewport(tester, const Size(360, 740));
+      await tester.pumpWidget(harness(topOnCompact: true));
+
+      await tester.tap(find.text('confirm'));
+      await tester.pumpAndSettle();
+
+      final rect = tester.getRect(toastCard());
+      expect(rect.left, greaterThanOrEqualTo(0));
+      expect(rect.right, lessThanOrEqualTo(360));
+      // Full width between the insets, like the snack bar it stands in for.
+      expect(rect.width, greaterThan(360 - 60));
+    });
+
+    testWidgets('topOnCompact still auto-dismisses and closes on tap',
+        (tester) async {
+      setViewport(tester, const Size(390, 844));
+      await tester.pumpWidget(harness(topOnCompact: true));
+
+      await tester.tap(find.text('confirm'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(message));
+      await tester.pumpAndSettle();
+      expect(find.text(message), findsNothing);
+
+      await tester.tap(find.text('confirm'));
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pumpAndSettle();
+      expect(find.text(message), findsNothing);
     });
   });
 

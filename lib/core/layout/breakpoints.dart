@@ -63,22 +63,20 @@ const double kHeroActionsMinWidth = 340;
 /// Widest the action group is drawn at, per the desktop artboard.
 const double kHeroActionsMaxWidth = 420;
 
-/// Roughly what the hero's "Uložit kurz" button measures — icon, gap, label and
-/// padding. Only used to pick a layout, never to size the button itself.
-const double kHeroSaveButtonWidth = 170;
-
-/// Gap between the action group and the save button.
-const double kHeroActionsGap = 12;
-
-/// Whether [availableWidth] fits the course hero's action group *and* the save
-/// button on one line.
+/// Narrowest text column that keeps the action group beside the course icon.
 ///
-/// Used twice: to decide whether the whole row still fits beside the course
-/// icon, and — once it has dropped below the icon — whether the save button
-/// stays on the same line as the three action buttons.
-bool heroActionRowFits(double availableWidth) =>
-    availableWidth >=
-    kHeroActionsMinWidth + kHeroActionsGap + kHeroSaveButtonWidth;
+/// Deliberately wider than the group itself. Until BR-CVJURC the hero also
+/// carried an "Uložit kurz" button and this was the group, the gap and that
+/// button added up; the button is gone but the threshold stays, so the tablet
+/// hero keeps the shape BR-BCNXAP gave it — at these widths the text column is
+/// mostly title and description, and three buttons wedged next to the icon read
+/// as cramped even when their labels fit.
+const double kHeroActionsBesideIconMinWidth = 522;
+
+/// Whether [availableWidth] leaves the course hero's action group room beside
+/// the course icon. Below that the row drops under the icon.
+bool heroActionsFitBesideIcon(double availableWidth) =>
+    availableWidth >= kHeroActionsBesideIconMinWidth;
 
 /// Width of the white auth panel in the split-pane login.
 ///

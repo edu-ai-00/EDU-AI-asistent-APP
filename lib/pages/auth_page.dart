@@ -223,9 +223,13 @@ class _AuthPageState extends ConsumerState<AuthPage> with SingleTickerProviderSt
       _pinError = null;
     });
 
-    // Persist user's session-mode choice. The auth response will overwrite
-    // session_shared_device with what the server actually issued.
-    final shared = !_keepLoggedIn;
+    // The entry screen offers no session choice — the "stay logged in" box
+    // lives on the e-mail/SSO form only (BR-DRPQMP) — so a code always starts
+    // the default shared-device session (rule 5.6), whatever was ticked on
+    // that form before coming back here. The shared-device banner's "this is
+    // my device" makes it a personal one (rule 1.10). Recorded as the pending
+    // choice too, so a later e-mail verification asks for the same mode.
+    const shared = true;
     await ref.read(sessionMetaProvider).setPendingSharedDevice(shared);
 
     try {
@@ -671,20 +675,29 @@ class _AuthPageState extends ConsumerState<AuthPage> with SingleTickerProviderSt
 
   /// Phone / portrait tablet: illustration on top, white sheet over the bottom.
   Widget _buildSheetLayout(BuildContext context) {
-    final screenHeight = MediaQuery.sizeOf(context).height;
+    // Read the insets here, from the page's own context — not inside the
+    // builder below, which sits under the Scaffold. Scaffold
+    // (resizeToAvoidBottomInset) shrinks its body for the keyboard and strips
+    // the keyboard inset from the body's MediaQuery, so in there the keyboard
+    // always read as 0: the clamp below never engaged, the e-mail form slid
+    // under the status bar and the language switcher stayed drawn over the
+    // white card (BR-YR42DA).
+    final mq = MediaQuery.of(context);
+    final screenHeight = mq.size.height;
+    final keyboardInset = mq.viewInsets.bottom;
+    // The height the Stack below is actually laid out in.
+    final bodyHeight = screenHeight - keyboardInset;
 
     return AnimatedBuilder(
           animation: _animationController,
-          builder: (context, child) {
+          builder: (_, _) {
             // Cap the card height so its top never rises above the top safe-area
             // inset. When the keyboard opens, Scaffold's default
             // resizeToAvoidBottomInset shrinks the body, but the card height is
             // computed from the full screen height — without this clamp the card
             // overflows upward and the header/back button slide under the status
             // bar (BR-PXB3N3).
-            final mq = MediaQuery.of(context);
-            final maxContainerHeight =
-                mq.size.height - mq.viewInsets.bottom - mq.padding.top;
+            final maxContainerHeight = bodyHeight - mq.padding.top;
             final containerHeight = maxContainerHeight <= 0
                 ? screenHeight * _heightAnimation.value
                 : (screenHeight * _heightAnimation.value)
@@ -701,7 +714,7 @@ class _AuthPageState extends ConsumerState<AuthPage> with SingleTickerProviderSt
                 mq.size.width * _waveCompactZoom * kAuthWaveAspectRatio;
             final heroBottom = bgBottom + waveHeight * (1 - _heroWaveOverlap);
             final heroBand =
-                mq.size.height - mq.padding.top - _heroTopGap - heroBottom;
+                bodyHeight - mq.padding.top - _heroTopGap - heroBottom;
 
             return Stack(
               key: sheetKey,
@@ -761,7 +774,7 @@ class _AuthPageState extends ConsumerState<AuthPage> with SingleTickerProviderSt
                 // gradient above the card, which tops out at 72% of the screen.
                 // Hidden while the keyboard is up: the card is then clamped to
                 // the full remaining height and would slide under the pill.
-                if (mq.viewInsets.bottom == 0)
+                if (keyboardInset == 0)
                   const Positioned(
                     top: 0,
                     right: 0,
@@ -857,8 +870,9 @@ class _AuthPageState extends ConsumerState<AuthPage> with SingleTickerProviderSt
               textAlign: TextAlign.center,
             ),
           ],
-          const SizedBox(height: 12),
-          _buildKeepLoggedInCheckbox(),
+          // No "stay logged in" box here (BR-DRPQMP): it pushed the
+          // log-in/sign-up button below the fold on short screens, and the
+          // choice belongs to the e-mail/SSO form.
           const SizedBox(height: 16),
           // Access Free Courses button
           SizedBox(
@@ -1128,7 +1142,7 @@ class _AuthPageState extends ConsumerState<AuthPage> with SingleTickerProviderSt
 
   /// Opt-out checkbox: when checked, the new session is persistent (no
   /// inactivity logout). Default unchecked = shared device, auto-logout
-  /// after 15 min idle / 8 h hard cap.
+  /// after 15 min idle / 8 h hard cap. E-mail/SSO form only (BR-DRPQMP).
   Widget _buildKeepLoggedInCheckbox() {
     return InkWell(
       onTap: () {

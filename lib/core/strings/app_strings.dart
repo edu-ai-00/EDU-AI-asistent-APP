@@ -134,11 +134,11 @@ class AppStrings {
   static String get courseTabAbout => _t('courseTabAbout');
   static String get courseTabSkills => _t('courseTabSkills');
   static String get courseTabStats => _t('courseTabStats');
-  static String get courseSaveButton => _t('courseSaveButton');
   static String get courseShowFewerLessons => _t('courseShowFewerLessons');
   static String get courseOpenLesson => _t('courseOpenLesson');
   static String get courseSkillsInCourse => _t('courseSkillsInCourse');
   static String get courseSkillsEmpty => _t('courseSkillsEmpty');
+  static String get courseSkillsNone => _t('courseSkillsNone');
   static String get courseStatsPlaceholder => _t('courseStatsPlaceholder');
   static String get courseDetailedStats => _t('courseDetailedStats');
   static String get courseTrophyHint => _t('courseTrophyHint');
@@ -281,6 +281,44 @@ class AppStrings {
   static String get novinkyLoading => _t('novinkyLoading');
   static String get novinkyRetry => _t('novinkyRetry');
   static String get novinkyPickArticle => _t('novinkyPickArticle');
+
+  // ── Notifications (feed, push, settings) ──
+  static String get novinkyMarkAllRead => _t('novinkyMarkAllRead');
+  static String get novinkyMarkAllReadFailed => _t('novinkyMarkAllReadFailed');
+  static String get novinkyOfflineHint => _t('novinkyOfflineHint');
+  static String get novinkyLoadMoreFailed => _t('novinkyLoadMoreFailed');
+  static String get notificationOpen => _t('notificationOpen');
+  static String get notificationNewFallback => _t('notificationNewFallback');
+  static String get pushPrimingTitle => _t('pushPrimingTitle');
+  static String get pushPrimingBody => _t('pushPrimingBody');
+  static String get pushPrimingAllow => _t('pushPrimingAllow');
+  static String get pushPrimingLater => _t('pushPrimingLater');
+  static String get pushPermissionDenied => _t('pushPermissionDenied');
+  static String get notifSettingsPushTitle => _t('notifSettingsPushTitle');
+  static String get notifSettingsPushSubtitle => _t('notifSettingsPushSubtitle');
+  static String get notifSettingsMandatoryTitle =>
+      _t('notifSettingsMandatoryTitle');
+  static String get notifSettingsDeviceOff => _t('notifSettingsDeviceOff');
+  static String get notifSettingsDeviceEnable => _t('notifSettingsDeviceEnable');
+  static String get notifSettingsQuietTitle => _t('notifSettingsQuietTitle');
+  static String get notifSettingsQuietSubtitle =>
+      _t('notifSettingsQuietSubtitle');
+  static String get notifSettingsQuietFrom => _t('notifSettingsQuietFrom');
+  static String get notifSettingsQuietTo => _t('notifSettingsQuietTo');
+  static String get notifSettingsQuietReset => _t('notifSettingsQuietReset');
+  static String get notifSettingsReminderTitle =>
+      _t('notifSettingsReminderTitle');
+  static String get notifSettingsReminderSubtitle =>
+      _t('notifSettingsReminderSubtitle');
+  static String get notifSettingsReminderTime => _t('notifSettingsReminderTime');
+  static String get notifSettingsLoadError => _t('notifSettingsLoadError');
+  static String get notifSettingsSaveError => _t('notifSettingsSaveError');
+  static String get notifSettingsUnavailable => _t('notifSettingsUnavailable');
+  static String notifSettingsTimezone(String timezone) => _pick(
+        cz: 'Časové pásmo: $timezone',
+        sk: 'Časové pásmo: $timezone',
+        en: 'Time zone: $timezone',
+      );
 
   // ── Doplňky ──
   static String get doplnkyTitle => _t('doplnkyTitle');
@@ -580,7 +618,7 @@ class AppStrings {
         en: '$count lessons',
       );
   static String practiceDueCount(int count) => _pick(
-        cz: '$count karet k procvičení',
+        cz: '$count věcí k opakování',
         sk: '$count kariet na precvičenie',
         en: '$count cards to review',
       );
@@ -828,7 +866,7 @@ class AppStrings {
         en: '+$xp XP earned',
       );
   static String get practiceCompleted => _pick(
-        cz: 'Procvičování dokončeno!',
+        cz: 'Opakování je hotové!',
         sk: 'Precvičovanie dokončené!',
         en: 'Practice complete!',
       );
@@ -853,6 +891,7 @@ class AppStrings {
   static String get quizConfirmSubmit => _t('quizConfirmSubmit');
   static String get quizConfirmBack => _t('quizConfirmBack');
   static String get quizConfirmSend => _t('quizConfirmSend');
+  static String get quizSubmitting => _t('quizSubmitting');
   static String get quizConfirmExitMessage => _t('quizConfirmExitMessage');
   static String get quizConfirmExitLeave => _t('quizConfirmExitLeave');
   static String get quizConfirmExitStay => _t('quizConfirmExitStay');
@@ -1285,7 +1324,6 @@ class AppStrings {
   static String get chatyTitle => _t('chatyTitle');
   static String get chatySubtitle => _t('chatySubtitle');
   static String get chatyInfoBanner => _t('chatyInfoBanner');
-  static String get chatyEndedFilter => _t('chatyEndedFilter');
   static String get chatyOfflineBanner => _t('chatyOfflineBanner');
   static String get chatyNewChat => _t('chatyNewChat');
   static String get chatyTimeNow => _t('chatyTimeNow');
@@ -1586,6 +1624,12 @@ class AppStrings {
   static String get sharedDeviceDialogKeepLoggedIn => _t('sharedDeviceDialogKeepLoggedIn');
   static String get sharedDeviceConvertError => _t('sharedDeviceConvertError');
 
+  // ── Install-the-app offer (mobile web, BR-FBF78W) ──
+  static String get installAppPromptTitle => _t('installAppPromptTitle');
+  static String get installAppPromptMessage => _t('installAppPromptMessage');
+  static String get installAppPromptInstall => _t('installAppPromptInstall');
+  static String get installAppPromptStay => _t('installAppPromptStay');
+
   // ── Shop ──
   static String get shopTitle => _t('shopTitle');
   static String get shopPermanentItems => _t('shopPermanentItems');
@@ -1603,7 +1647,6 @@ class AppStrings {
   static String get shopUnequip => _t('shopUnequip');
   static String get shopGetFree => _t('shopGetFree');
   static String get shopPurchaseFailed => _t('shopPurchaseFailed');
-  static String get shopOfflineNotice => _t('shopOfflineNotice');
   static String get shopLoadFailed => _t('shopLoadFailed');
   static String get shopEmptySlot => _t('shopEmptySlot');
   static String get shopRetry => _t('shopRetry');
@@ -1619,7 +1662,7 @@ class AppStrings {
   // Czech strings (default locale)
   // ═════════════════════════════════════════════════════════════════════
   static const Map<String, String> _cz = {
-    'navPrehled': 'Prehled',
+    'navPrehled': 'Přehled',
     'navChat': 'Chat',
     'navKurzy': 'Kurzy',
     'navNovinky': 'Novinky',
@@ -1658,13 +1701,13 @@ class AppStrings {
     'courseTabAbout': 'O kurzu',
     'courseTabSkills': 'Dovednosti',
     'courseTabStats': 'Statistiky',
-    'courseSaveButton': 'Uložit kurz',
     'courseShowAllLessons': 'Zobrazit všechny lekce ({count})',
     'courseShowFewerLessons': 'Zobrazit méně',
     'courseOpenLesson': 'Otevřít',
     'courseSkillsInCourse': 'Dovednosti v kurzu',
     'courseSkillsEmpty':
         'Dovednosti se objeví, až vyřešíš pár úloh.',
+    'courseSkillsNone': 'Úlohy v tomto kurzu nerozvíjejí žádnou sledovanou dovednost.',
     'courseStatsPlaceholder': 'Statistiky kurzu teprve připravujeme.',
     'courseDetailedStats': 'Zobrazit detailní statistiky',
     'courseTrophyHint': 'Dokonči a získej trofej!',
@@ -1675,7 +1718,7 @@ class AppStrings {
     'courseLevelLabel': 'Úroveň: {level}',
     'skillLevelLabel': 'Úroveň {level}',
     'appTitle': 'Edu',
-    'appName': 'EduAI',
+    'appName': 'EDU-AI',
     'welcomeGreeting': 'Ahoj',
     'welcomeDescription': 'Vítej ve své\nnové appce!',
     'guideHeading': 'Začněte s návodem',
@@ -1687,23 +1730,23 @@ class AppStrings {
     'guideButton': 'Začít cvičení',
     'onboardingLoadError':
         'Úvodní kurz se nepodařilo připravit. Zkontroluj připojení a zkus to prosím znovu.',
-    'practiceTitle': 'Procvičování',
-    'practiceStart': 'Začít procvičování',
-    'practiceEmpty': 'Teď nemáš nic k procvičení. Vrať se později!',
-    'practiceDashSubtitle': 'Zopakuj si, co tě čeká dnes',
+    'practiceTitle': 'Opakování',
+    'practiceStart': 'Jdeme na to',
+    'practiceEmpty': 'Teď nemáš nic k opakování. Vrať se později!',
+    'practiceDashSubtitle': 'Procvičuj pravidelně, ať nezapomeneš, co už umíš.',
     'practiceBonusHint':
         'Na dnešek máš hotovo. Chceš pokračovat? Připravili jsme ti sadu navíc.',
-    'practiceBonusStart': 'Procvičovat sadu navíc',
-    'practiceScopeTitle': 'Co chceš procvičovat',
-    'practiceScopeAllHint': 'Bez výběru se procvičuje vše.',
+    'practiceBonusStart': 'Ještě další opakování',
+    'practiceScopeTitle': 'Co budeme opakovat',
+    'practiceScopeAllHint': 'Když nic nezměníš, procvičuje se všechno.',
     'practiceScopeSelectAll': 'Vybrat vše',
     'practiceScopeOther': 'Ostatní',
     'practiceScopeEmpty':
         'Ve vybraných oblastech teď není nic k procvičení. Zkus vybrat další oblasti.',
     'promoBadge': 'KNIHOVNA',
     'promoTitle': 'Prozkoumej kurzy!',
-    'promoDescription': 'V knihovně najdeš kurzy,\nkteré máš nyní k dispozici',
-    'promoDescriptionReward': 'Studuj a čeká tě odměna:\nhra Oblaka 🤸',
+    'promoDescription': 'V knihovně najdeš kurzy, které máš nyní k dispozici',
+    'promoDescriptionReward': 'Studuj a čeká tě odměna: hra Oblaka 🤸',
     'dashGreetingWelcome': 'Vítej ve své nové appce!',
     'dashGreetingKeepGoing': 'Pokračuj v učení a zlepšíš se každý den.',
     'dashGreetingProud': 'Mám radost, co už jsme spolu dokázali.',
@@ -1711,13 +1754,13 @@ class AppStrings {
     'practiceNothingDue':
         'Teď nemáš nic k opakování. Projdi lekci a karty se objeví.',
     'globalQuizHeading': 'Dej si kvíz',
-    'globalQuizTitle': 'Otestuj se napříč kurzy',
-    'globalQuizSubtitle': 'Náhodné otázky ze všech tvých kurzů',
+    'globalQuizTitle': 'Připravuj se na zkoušky',
+    'globalQuizSubtitle': 'Deset úloh šitých na míru tvým aktuálním schopnostem.',
     'globalQuizStart': 'Spustit kvíz',
     'jpzBadge': 'PŘIJÍMAČKY',
     'jpzTitle': 'Uvažuješ o přijímačkách?',
-    'jpzDescription': 'Projdi si úvod k jednotné\npřijímací zkoušce',
-    'jpzCermatikDescription': 'Zeptej se Cermatíka na cokoli\nkolem přijímaček',
+    'jpzDescription': 'Projdi si úvod k jednotné přijímací zkoušce',
+    'jpzCermatikDescription': 'Zeptej se Cermatíka na cokoli kolem přijímaček',
     'statShopSubtitle': 'Vyber si nový vzhled\npro svou postavičku.',
     'statShopAction': 'Otevřít',
     'sectionQuickQuizzes': 'Rychlé kvízy',
@@ -1785,6 +1828,39 @@ class AppStrings {
     'novinkyLoading': 'Načítání novinek…',
     'novinkyRetry': 'Zkusit znovu',
     'novinkyPickArticle': 'Vyber novinku vlevo a přečti si ji tady.',
+    'novinkyMarkAllRead': 'Označit vše jako přečtené',
+    'novinkyMarkAllReadFailed': 'Nepodařilo se označit vše jako přečtené.',
+    'novinkyOfflineHint':
+        'Jsi offline – zobrazujeme naposledy načtené novinky.',
+    'novinkyLoadMoreFailed': 'Další novinky se nepodařilo načíst.',
+    'notificationOpen': 'Otevřít',
+    'notificationNewFallback': 'Nové oznámení',
+    'pushPrimingTitle': 'Chceš dostávat upozornění?',
+    'pushPrimingBody':
+        'Dáme ti vědět o důležitých zprávách ze školy a připomeneme ti učení. Nastavení změníš kdykoli v profilu.',
+    'pushPrimingAllow': 'Povolit',
+    'pushPrimingLater': 'Teď ne',
+    'pushPermissionDenied':
+        'Upozornění jsou v zařízení vypnutá. Zapnout je můžeš v nastavení systému.',
+    'notifSettingsPushTitle': 'Push oznámení',
+    'notifSettingsPushSubtitle':
+        'Připomenutí, výzvy a zprávy o tvém pokroku. Všechno najdeš i v Novinkách.',
+    'notifSettingsMandatoryTitle': 'Tato oznámení dostaneš vždy:',
+    'notifSettingsDeviceOff': 'Upozornění jsou v tomto zařízení vypnutá.',
+    'notifSettingsDeviceEnable': 'Povolit upozornění',
+    'notifSettingsQuietTitle': 'Tichý režim',
+    'notifSettingsQuietSubtitle':
+        'V tuto dobu ti nebudeme posílat upozornění (kromě důležitých).',
+    'notifSettingsQuietFrom': 'Od',
+    'notifSettingsQuietTo': 'Do',
+    'notifSettingsQuietReset': 'Obnovit výchozí',
+    'notifSettingsReminderTitle': 'Připomenutí učení',
+    'notifSettingsReminderSubtitle':
+        'Připomeneme ti učení každý den ve zvolený čas.',
+    'notifSettingsReminderTime': 'Čas připomenutí',
+    'notifSettingsLoadError': 'Nastavení oznámení se nepodařilo načíst.',
+    'notifSettingsSaveError': 'Změnu se nepodařilo uložit. Zkus to znovu.',
+    'notifSettingsUnavailable': 'Nastavení oznámení zatím není k dispozici.',
     'doplnkyTitle': 'Doplňky',
     'doplnkySubtitle': 'Minihry, úprava avatara a motivy aplikace na jednom místě.',
     'doplnkyAvatarTitle': 'Editor avatara',
@@ -1974,8 +2050,8 @@ class AppStrings {
     'lessonSelectAnswerFirst': 'Nejprve vyber odpověď',
     'lessonExplanation': 'Vysvětlení',
     'lessonFeedbackClear': 'Už je to jasné',
-    'lessonFeedbackPractice': 'Přidat k procvičování',
-    'lessonFeedbackPracticeAdded': 'Přidáno k procvičování',
+    'lessonFeedbackPractice': 'Připomeň mi to později',
+    'lessonFeedbackPracticeAdded': 'Přidáno do sbírky k opakování',
     'mentorSheetInputHint': 'Zeptej se AI mentora',
     'mentorSheetNoHelp': 'Zkus mi napsat vlastními slovy, čemu nerozumíš — vysvětlím ti to jinak.',
     'lessonFeedbackConfused': 'Nerozumím tomu',
@@ -2001,6 +2077,7 @@ class AppStrings {
     'quizConfirmSubmit': 'Opravdu chceš kvíz odeslat? Potom se k němu již nejde vrátit.',
     'quizConfirmBack': 'Zpět',
     'quizConfirmSend': 'Odeslat',
+    'quizSubmitting': 'Odesílám kvíz...',
     'quizConfirmExitMessage': 'Opravdu chcete kvíz ukončit? Není možné se vrátit ani ho spustit znovu.',
     'quizConfirmExitLeave': 'Ukončit',
     'quizConfirmExitStay': 'Pokračovat',
@@ -2052,10 +2129,7 @@ class AppStrings {
     'termsLastUpdated': 'Poslední aktualizace: 19. ledna 2026',
     'termsSection1Title': '1. Úvodní ustanovení',
     'termsSection1Body':
-        'Tyto podmínky použití upravují práva a povinnosti uživatelů '
-        'aplikace EDU-AI. Používáním aplikace souhlasíte s těmito '
-        'podmínkami. Aplikace je určena pro vzdělávací účely a je '
-        'provozována společností EduAI s.r.o.',
+        'Tyto podmínky použití upravují práva a povinnosti uživatelů aplikace EDU-AI. Používáním aplikace souhlasíte s těmito podmínkami. Aplikace je určena pro vzdělávací účely a je provozována společností EDU-AI o.p.s.',
     'termsSection2Title': '2. Uživatelský účet',
     'termsSection2Body':
         'Pro využívání plných funkcí aplikace je nutné vytvořit '
@@ -2095,9 +2169,7 @@ class AppStrings {
         'vyjadřujete souhlas s novým zněním.',
     'termsSection8Title': '8. Kontakt',
     'termsSection8Body':
-        'V případě dotazů nebo připomínek nás můžete kontaktovat na '
-        'e-mailové adrese podpora@eduai.cz nebo prostřednictvím '
-        'kontaktního formuláře v aplikaci.',
+        'V případě dotazů nebo připomínek nás můžete kontaktovat na e-mailové adrese app@edu-ai.eu nebo prostřednictvím kontaktního formuláře v aplikaci.',
     'privacyTitle': 'Soukromí a zabezpečení',
     'privacyComingSoon': 'Připravujeme',
     'privacyComingSoonMessage':
@@ -2108,7 +2180,7 @@ class AppStrings {
     'bookmarksListCourseNotDownloaded': 'Kurz není stažen',
     'aboutTitle': 'O aplikaci',
     'aboutSectionAppInfo': 'Informace o aplikaci',
-    'aboutAppName': 'EduAI',
+    'aboutAppName': 'EDU-AI asistent',
     'aboutLabelName': 'Název',
     'aboutLabelVersion': 'Verze',
     'aboutLabelBuild': 'Build',
@@ -2269,7 +2341,6 @@ class AppStrings {
     'chatyTitle': 'Chaty',
     'chatySubtitle': 'Vyber si mentora nebo kouče pro konzultaci',
     'chatyInfoBanner': 'Všichni AI mentoři a AI učitelé jsou dostupní 24/7 pro pomoc s učením.',
-    'chatyEndedFilter': 'Ukončené',
     'chatyOfflineBanner': 'Nejsi online',
     'chatyNewChat': 'Nový chat',
     'chatyTimeNow': 'teď',
@@ -2449,9 +2520,14 @@ class AppStrings {
     'challenge60DayStreakDesc': 'Opravdová disciplína',
     'sharedDeviceBannerLabel': 'Sdílené zařízení — odhlášení po 15 min nečinnosti',
     'sharedDeviceDialogTitle': 'Sdílené zařízení',
-    'sharedDeviceDialogMessage': 'Toto zařízení je označené jako sdílené — po 15 minutách nečinnosti budete automaticky odhlášeni. Chcete se odhlásit nyní, nebo označit zařízení jako vlastní a zůstat přihlášeni?',
+    'sharedDeviceDialogMessage': 'Toto zařízení je označené jako sdílené — po 15 minutách nečinnosti tě automaticky odhlásíme. Chceš se odhlásit hned, nebo zařízení označit jako své? Pak už tě odhlašovat nebudeme.',
     'sharedDeviceDialogKeepLoggedIn': 'Toto je moje zařízení',
-    'sharedDeviceConvertError': 'Zařízení se nepodařilo označit jako vlastní. Zkuste to prosím znovu.',
+    'sharedDeviceConvertError': 'Zařízení se nepodařilo označit jako vlastní. Zkus to prosím znovu.',
+    'installAppPromptTitle': 'EDU-AI asistent jako aplikace',
+    'installAppPromptMessage':
+        'Na telefonu a tabletu se EDU-AI asistent nejlépe používá v aplikaci. Chceš si ji nainstalovat, nebo zůstat v prohlížeči?',
+    'installAppPromptInstall': 'Nainstalovat aplikaci',
+    'installAppPromptStay': 'Zůstat v prohlížeči',
     'shopTitle': 'Obchod',
     'shopPermanentItems': 'Trvalé předměty',
     'shopSlotHead': 'Hlava',
@@ -2468,7 +2544,6 @@ class AppStrings {
     'shopUnequip': 'Sundat',
     'shopGetFree': 'Získat zdarma',
     'shopPurchaseFailed': 'Předmět se nepodařilo získat. Zkontroluj připojení.',
-    'shopOfflineNotice': 'Bez připojení — ukazujeme uloženou nabídku.',
     'shopLoadFailed': 'Obchod se nepodařilo načíst.',
     'shopEmptySlot': 'Zatím tu nic není.',
     'shopRetry': 'Zkusit znovu',
@@ -2522,12 +2597,12 @@ class AppStrings {
     'courseTabAbout': 'About',
     'courseTabSkills': 'Skills',
     'courseTabStats': 'Stats',
-    'courseSaveButton': 'Save course',
     'courseShowAllLessons': 'Show all lessons ({count})',
     'courseShowFewerLessons': 'Show fewer',
     'courseOpenLesson': 'Open',
     'courseSkillsInCourse': 'Skills in this course',
     'courseSkillsEmpty': 'Skills appear once you have solved a few tasks.',
+    'courseSkillsNone': 'The tasks in this course do not train any tracked skill.',
     'courseStatsPlaceholder': 'Course stats are still in the works.',
     'courseDetailedStats': 'View detailed stats',
     'courseTrophyHint': 'Finish it and earn a trophy!',
@@ -2538,7 +2613,7 @@ class AppStrings {
     'courseLevelLabel': 'Level: {level}',
     'skillLevelLabel': 'Level {level}',
     'appTitle': 'Edu',
-    'appName': 'EduAI',
+    'appName': 'EDU-AI',
     'welcomeGreeting': 'Hi',
     'welcomeDescription': 'Welcome to your\nnew app!',
     'guideHeading': 'Start with the guide',
@@ -2552,7 +2627,7 @@ class AppStrings {
         'Could not prepare the intro course. Check your connection and try again.',
     'practiceTitle': 'Practice',
     'practiceStart': 'Start practice',
-    'practiceEmpty': "Nothing to review right now. Check back later!",
+    'practiceEmpty': 'Nothing to practice right now. Check back later!',
     'practiceDashSubtitle': "Review what's due today",
     'practiceBonusHint':
         "You're done for today. Want to keep going? Here's a bonus set.",
@@ -2565,8 +2640,10 @@ class AppStrings {
         'Nothing to review in the selected areas right now. Try selecting more.',
     'promoBadge': 'LIBRARY',
     'promoTitle': 'Explore courses!',
-    'promoDescription': 'Find courses in the library\nthat are available to you now',
-    'promoDescriptionReward': 'Keep studying — a reward awaits:\nthe Clouds game 🤸',
+    'promoDescription':
+        'Find courses in the library that are available to you now',
+    'promoDescriptionReward':
+        'Keep studying — a reward awaits: the Clouds game 🤸',
     'dashGreetingWelcome': 'Welcome to your new app!',
     'dashGreetingKeepGoing': 'Keep learning and you will improve every day.',
     'dashGreetingProud': 'I am glad about what we have achieved together.',
@@ -2579,8 +2656,8 @@ class AppStrings {
     'globalQuizStart': 'Start the quiz',
     'jpzBadge': 'ENTRANCE EXAMS',
     'jpzTitle': 'Thinking about entrance exams?',
-    'jpzDescription': 'Take the intro to the unified\nentrance exam',
-    'jpzCermatikDescription': 'Ask Cermatík anything\nabout entrance exams',
+    'jpzDescription': 'Take the intro to the unified entrance exam',
+    'jpzCermatikDescription': 'Ask Cermatík anything about entrance exams',
     'statShopSubtitle': 'Pick a new look\nfor your character.',
     'statShopAction': 'Open',
     'sectionQuickQuizzes': 'Quick quizzes',
@@ -2649,6 +2726,38 @@ class AppStrings {
     'novinkyLoading': 'Loading news…',
     'novinkyRetry': 'Try again',
     'novinkyPickArticle': 'Pick a story on the left to read it here.',
+    'novinkyMarkAllRead': 'Mark all as read',
+    'novinkyMarkAllReadFailed': 'Could not mark everything as read.',
+    'novinkyOfflineHint': 'You are offline — showing what loaded last time.',
+    'novinkyLoadMoreFailed': 'Could not load more.',
+    'notificationOpen': 'Open',
+    'notificationNewFallback': 'New notification',
+    'pushPrimingTitle': 'Would you like notifications?',
+    'pushPrimingBody':
+        'We will let you know about important school messages and remind you to study. You can change this any time in your profile.',
+    'pushPrimingAllow': 'Allow',
+    'pushPrimingLater': 'Not now',
+    'pushPermissionDenied':
+        'Notifications are turned off on this device. You can turn them on in the system settings.',
+    'notifSettingsPushTitle': 'Push notifications',
+    'notifSettingsPushSubtitle':
+        'Reminders, challenges and progress updates. Everything also appears in News.',
+    'notifSettingsMandatoryTitle': 'You will always receive these:',
+    'notifSettingsDeviceOff': 'Notifications are turned off on this device.',
+    'notifSettingsDeviceEnable': 'Allow notifications',
+    'notifSettingsQuietTitle': 'Quiet hours',
+    'notifSettingsQuietSubtitle':
+        'No notifications during these hours (except important ones).',
+    'notifSettingsQuietFrom': 'From',
+    'notifSettingsQuietTo': 'To',
+    'notifSettingsQuietReset': 'Reset to default',
+    'notifSettingsReminderTitle': 'Study reminder',
+    'notifSettingsReminderSubtitle':
+        'We will remind you to study every day at the time you choose.',
+    'notifSettingsReminderTime': 'Reminder time',
+    'notifSettingsLoadError': 'Could not load notification settings.',
+    'notifSettingsSaveError': 'Could not save the change. Please try again.',
+    'notifSettingsUnavailable': 'Notification settings are not available yet.',
     'doplnkyTitle': 'Extras',
     'doplnkySubtitle': 'Mini games, avatar dress-up and app themes in one place.',
     'doplnkyAvatarTitle': 'Avatar editor',
@@ -2865,6 +2974,7 @@ class AppStrings {
     'quizConfirmSubmit': "Are you sure you want to submit the quiz? You won't be able to come back to it.",
     'quizConfirmBack': 'Back',
     'quizConfirmSend': 'Submit',
+    'quizSubmitting': 'Submitting the quiz...',
     'quizConfirmExitMessage': "Are you sure you want to leave the quiz? You can't return to it or start it again.",
     'quizConfirmExitLeave': 'Leave',
     'quizConfirmExitStay': 'Continue',
@@ -2916,10 +3026,7 @@ class AppStrings {
     'termsLastUpdated': 'Last updated: January 19, 2026',
     'termsSection1Title': '1. Introductory provisions',
     'termsSection1Body':
-        'These terms of use govern the rights and obligations of users '
-        'of the EDU-AI application. By using the application you agree '
-        'to these terms. The application is intended for educational '
-        'purposes and is operated by EduAI s.r.o.',
+        'These terms of use govern the rights and obligations of users of the EDU-AI application. By using the application you agree to these terms. The application is intended for educational purposes and is operated by EDU-AI o.p.s.',
     'termsSection2Title': '2. User account',
     'termsSection2Body':
         'A user account is required to access the full features of the '
@@ -2958,8 +3065,7 @@ class AppStrings {
         'agreement with the new wording.',
     'termsSection8Title': '8. Contact',
     'termsSection8Body':
-        'For questions or comments you can contact us at '
-        'support@eduai.cz or via the contact form in the application.',
+        'For questions or comments you can contact us at app@edu-ai.eu or via the contact form in the application.',
     'privacyTitle': 'Privacy & security',
     'privacyComingSoon': 'Coming soon',
     'privacyComingSoonMessage':
@@ -2970,7 +3076,7 @@ class AppStrings {
     'bookmarksListCourseNotDownloaded': 'Course not downloaded',
     'aboutTitle': 'About',
     'aboutSectionAppInfo': 'App info',
-    'aboutAppName': 'EduAI',
+    'aboutAppName': 'EDU-AI asistent',
     'aboutLabelName': 'Name',
     'aboutLabelVersion': 'Version',
     'aboutLabelBuild': 'Build',
@@ -3131,7 +3237,6 @@ class AppStrings {
     'chatyTitle': 'Chats',
     'chatySubtitle': 'Pick a mentor or coach to consult',
     'chatyInfoBanner': 'All AI mentors and AI teachers are available 24/7 for learning help.',
-    'chatyEndedFilter': 'Ended',
     'chatyOfflineBanner': "You're offline",
     'chatyNewChat': 'New chat',
     'chatyTimeNow': 'now',
@@ -3314,6 +3419,11 @@ class AppStrings {
     'sharedDeviceDialogMessage': "This device is marked as shared — you'll be signed out automatically after 15 minutes of inactivity. Sign out now, or mark this device as your own and stay signed in?",
     'sharedDeviceDialogKeepLoggedIn': 'This is my device',
     'sharedDeviceConvertError': "Couldn't mark this device as your own. Please try again.",
+    'installAppPromptTitle': 'EDU-AI asistent as an app',
+    'installAppPromptMessage':
+        'On a phone or tablet, EDU-AI asistent works best as an app. Would you like to install it, or stay in the browser?',
+    'installAppPromptInstall': 'Install the app',
+    'installAppPromptStay': 'Stay in the browser',
     'shopTitle': 'Store',
     'shopPermanentItems': 'Permanent Items',
     'shopSlotHead': 'Head',
@@ -3330,7 +3440,6 @@ class AppStrings {
     'shopUnequip': 'Take off',
     'shopGetFree': 'Get for free',
     'shopPurchaseFailed': "Couldn't get the item. Check your connection.",
-    'shopOfflineNotice': 'No connection — showing the saved catalog.',
     'shopLoadFailed': "Couldn't load the store.",
     'shopEmptySlot': 'Nothing here yet.',
     'shopRetry': 'Try again',
@@ -3356,7 +3465,7 @@ class AppStrings {
     'navKurzy': 'Kurzy',
     'navNovinky': 'Novinky',
     'appTitle': 'Edu',
-    'appName': 'EduAI',
+    'appName': 'EDU-AI',
     'welcomeGreeting': 'Ahoj',
     'welcomeDescription': 'Vitaj vo svojej\nnovej appke!',
     'guideHeading': 'Začnite s návodom',
@@ -3368,14 +3477,14 @@ class AppStrings {
     'guideButton': 'Začať cvičenie',
     'onboardingLoadError':
         'Úvodný kurz sa nepodarilo pripraviť. Skontroluj pripojenie a skús to prosím znova.',
-    'practiceTitle': 'Precvičovanie',
-    'practiceStart': 'Začať precvičovanie',
+    'practiceTitle': 'Opakovanie',
+    'practiceStart': 'Začať teraz',
     'practiceEmpty': 'Teraz nemáš nič na precvičenie. Vráť sa neskôr!',
     'practiceDashSubtitle': 'Zopakuj si, čo ťa čaká dnes',
     'practiceBonusHint':
         'Na dnešok máš hotovo. Chceš pokračovať? Pripravili sme ti sadu navyše.',
     'practiceBonusStart': 'Precvičovať sadu navyše',
-    'practiceScopeTitle': 'Čo chceš precvičovať',
+    'practiceScopeTitle': 'Čo budeme precvičovať',
     'practiceScopeAllHint': 'Bez výberu sa precvičuje všetko.',
     'practiceScopeSelectAll': 'Vybrať všetko',
     'practiceScopeOther': 'Ostatné',
@@ -3383,8 +3492,8 @@ class AppStrings {
         'Vo vybraných oblastiach teraz nie je nič na precvičenie. Skús vybrať ďalšie oblasti.',
     'promoBadge': 'KNIŽNICA',
     'promoTitle': 'Preskúmaj kurzy!',
-    'promoDescription': 'V knižnici nájdeš kurzy,\nktoré máš teraz k dispozícii',
-    'promoDescriptionReward': 'Študuj a čaká ťa odmena:\nhra Oblaka 🤸',
+    'promoDescription': 'V knižnici nájdeš kurzy, ktoré máš teraz k dispozícii',
+    'promoDescriptionReward': 'Študuj a čaká ťa odmena: hra Oblaka 🤸',
     'dashGreetingWelcome': 'Vitaj vo svojej novej appke!',
     'dashGreetingKeepGoing': 'Pokračuj v učení a zlepšíš sa každý deň.',
     'dashGreetingProud': 'Mám radosť, čo sme spolu už dokázali.',
@@ -3393,12 +3502,13 @@ class AppStrings {
         'Teraz nemáš nič na opakovanie. Prejdi lekciu a kartičky sa objavia.',
     'globalQuizHeading': 'Daj si kvíz',
     'globalQuizTitle': 'Otestuj sa naprieč kurzami',
-    'globalQuizSubtitle': 'Náhodné otázky zo všetkých tvojich kurzov',
+    'globalQuizSubtitle': 'Desať otázok zo všetkých tvojich kurzov, pre teba.',
     'globalQuizStart': 'Spustiť kvíz',
     'jpzBadge': 'PRIJÍMAČKY',
     'jpzTitle': 'Uvažuješ o prijímačkách?',
-    'jpzDescription': 'Prejdi si úvod k jednotnej\nprijímacej skúške',
-    'jpzCermatikDescription': 'Opýtaj sa Cermatíka na čokoľvek\nokolo prijímačiek',
+    'jpzDescription': 'Prejdi si úvod k jednotnej prijímacej skúške',
+    'jpzCermatikDescription':
+        'Opýtaj sa Cermatíka na čokoľvek okolo prijímačiek',
     'statShopSubtitle': 'Vyber si nový vzhľad\npre svoju postavičku.',
     'statShopAction': 'Otvoriť',
     'sectionQuickQuizzes': 'Rýchle kvízy',
@@ -3414,6 +3524,39 @@ class AppStrings {
     'novinkyLoading': 'Načítavam novinky…',
     'novinkyRetry': 'Skúsiť znova',
     'novinkyPickArticle': 'Vyber novinku vľavo a prečítaj si ju tu.',
+    'novinkyMarkAllRead': 'Označiť všetko ako prečítané',
+    'novinkyMarkAllReadFailed': 'Nepodarilo sa označiť všetko ako prečítané.',
+    'novinkyOfflineHint':
+        'Si offline – zobrazujeme naposledy načítané novinky.',
+    'novinkyLoadMoreFailed': 'Ďalšie novinky sa nepodarilo načítať.',
+    'notificationOpen': 'Otvoriť',
+    'notificationNewFallback': 'Nové oznámenie',
+    'pushPrimingTitle': 'Chceš dostávať upozornenia?',
+    'pushPrimingBody':
+        'Dáme ti vedieť o dôležitých správach zo školy a pripomenieme ti učenie. Nastavenie zmeníš kedykoľvek v profile.',
+    'pushPrimingAllow': 'Povoliť',
+    'pushPrimingLater': 'Teraz nie',
+    'pushPermissionDenied':
+        'Upozornenia sú v zariadení vypnuté. Zapnúť ich môžeš v nastaveniach systému.',
+    'notifSettingsPushTitle': 'Push oznámenia',
+    'notifSettingsPushSubtitle':
+        'Pripomenutia, výzvy a správy o tvojom pokroku. Všetko nájdeš aj v Novinkách.',
+    'notifSettingsMandatoryTitle': 'Tieto oznámenia dostaneš vždy:',
+    'notifSettingsDeviceOff': 'Upozornenia sú v tomto zariadení vypnuté.',
+    'notifSettingsDeviceEnable': 'Povoliť upozornenia',
+    'notifSettingsQuietTitle': 'Tichý režim',
+    'notifSettingsQuietSubtitle':
+        'V tomto čase ti nebudeme posielať upozornenia (okrem dôležitých).',
+    'notifSettingsQuietFrom': 'Od',
+    'notifSettingsQuietTo': 'Do',
+    'notifSettingsQuietReset': 'Obnoviť predvolené',
+    'notifSettingsReminderTitle': 'Pripomenutie učenia',
+    'notifSettingsReminderSubtitle':
+        'Pripomenieme ti učenie každý deň vo zvolenom čase.',
+    'notifSettingsReminderTime': 'Čas pripomenutia',
+    'notifSettingsLoadError': 'Nastavenia oznámení sa nepodarilo načítať.',
+    'notifSettingsSaveError': 'Zmenu sa nepodarilo uložiť. Skús to znova.',
+    'notifSettingsUnavailable': 'Nastavenia oznámení zatiaľ nie sú k dispozícii.',
     'kurzyTitle': 'Kurzy',
     'filterAll': 'Všetky',
     'filterInProgress': 'Prebiehajúce',
@@ -3551,7 +3694,7 @@ class AppStrings {
     'lessonExplanation': 'Vysvetlenie',
     'lessonFeedbackClear': 'Už je to jasné',
     'lessonFeedbackPractice': 'Pridať na precvičovanie',
-    'lessonFeedbackPracticeAdded': 'Pridané na precvičovanie',
+    'lessonFeedbackPracticeAdded': 'Pridané do sady na precvičovanie',
     'mentorSheetInputHint': 'Opýtaj sa AI mentora',
     'mentorSheetNoHelp': 'Skús mi napísať vlastnými slovami, čomu nerozumieš — vysvetlím ti to inak.',
     'lessonFeedbackConfused': 'Nerozumiem tomu',
@@ -3576,6 +3719,7 @@ class AppStrings {
     'quizConfirmSubmit': 'Naozaj chceš kvíz odoslať? Potom sa k nemu už nedá vrátiť.',
     'quizConfirmBack': 'Späť',
     'quizConfirmSend': 'Odoslať',
+    'quizSubmitting': 'Odosielam kvíz...',
     'quizConfirmExitMessage': 'Naozaj chcete kvíz ukončiť? Nie je možné sa vrátiť ani ho spustiť znova.',
     'quizConfirmExitLeave': 'Ukončiť',
     'quizConfirmExitStay': 'Pokračovať',
@@ -3628,10 +3772,7 @@ class AppStrings {
     'termsLastUpdated': 'Poslední aktualizace: 19. ledna 2026',
     'termsSection1Title': '1. Úvodní ustanovení',
     'termsSection1Body':
-        'Tyto podmínky použití upravují práva a povinnosti uživatelů '
-        'aplikace EDU-AI. Používáním aplikace souhlasíte s těmito '
-        'podmínkami. Aplikace je určena pro vzdělávací účely a je '
-        'provozována společností EduAI s.r.o.',
+        'Tyto podmínky použití upravují práva a povinnosti uživatelů aplikace EDU-AI. Používáním aplikace souhlasíte s těmito podmínkami. Aplikace je určena pro vzdělávací účely a je provozována společností EDU-AI o.p.s.',
     'termsSection2Title': '2. Uživatelský účet',
     'termsSection2Body':
         'Pro využívání plných funkcí aplikace je nutné vytvořit '
@@ -3671,9 +3812,7 @@ class AppStrings {
         'vyjadřujete souhlas s novým zněním.',
     'termsSection8Title': '8. Kontakt',
     'termsSection8Body':
-        'V případě dotazů nebo připomínek nás můžete kontaktovat na '
-        'e-mailové adrese podpora@eduai.cz nebo prostřednictvím '
-        'kontaktního formuláře v aplikaci.',
+        'V případě dotazů nebo připomínek nás můžete kontaktovat na e-mailové adrese app@edu-ai.eu nebo prostřednictvím kontaktního formuláře v aplikaci.',
     'privacyTitle': 'Súkromie a zabezpečenie',
     'privacyComingSoon': 'Pripravujeme',
     'privacyComingSoonMessage':
@@ -3684,7 +3823,7 @@ class AppStrings {
     'bookmarksListCourseNotDownloaded': 'Kurz nie je stiahnutý',
     'aboutTitle': 'O aplikácii',
     'aboutSectionAppInfo': 'Informácie o aplikácii',
-    'aboutAppName': 'EduAI',
+    'aboutAppName': 'EDU-AI asistent',
     'aboutLabelName': 'Názov',
     'aboutLabelVersion': 'Verzia',
     'aboutLabelBuild': 'Build',
@@ -3842,7 +3981,6 @@ class AppStrings {
     'chatyTitle': 'Chaty',
     'chatySubtitle': 'Vyber si mentora alebo kouča na konzultáciu',
     'chatyInfoBanner': 'Všetci AI mentori a AI učitelia sú dostupní 24/7 na pomoc s učením.',
-    'chatyEndedFilter': 'Ukončené',
     'chatyOfflineBanner': 'Nie si online',
     'chatyNewChat': 'Nový chat',
     'chatyTimeNow': 'teraz',
@@ -3994,9 +4132,14 @@ class AppStrings {
     'challenge60DayStreakDesc': 'Naozajstná disciplína',
     'sharedDeviceBannerLabel': 'Zdieľané zariadenie — odhlásenie po 15 min nečinnosti',
     'sharedDeviceDialogTitle': 'Zdieľané zariadenie',
-    'sharedDeviceDialogMessage': 'Toto zariadenie je označené ako zdieľané — po 15 minútach nečinnosti budete automaticky odhlásení. Chcete sa odhlásiť teraz, alebo označiť zariadenie ako vlastné a zostať prihlásení?',
+    'sharedDeviceDialogMessage': 'Toto zariadenie je označené ako zdieľané — po 15 minútach nečinnosti ťa automaticky odhlásime. Chceš sa odhlásiť hneď, alebo zariadenie označiť ako svoje? Potom ťa už odhlasovať nebudeme.',
     'sharedDeviceDialogKeepLoggedIn': 'Toto je moje zariadenie',
-    'sharedDeviceConvertError': 'Zariadenie sa nepodarilo označiť ako vlastné. Skúste to prosím znova.',
+    'sharedDeviceConvertError': 'Zariadenie sa nepodarilo označiť ako vlastné. Skús to prosím znova.',
+    'installAppPromptTitle': 'EDU-AI asistent ako aplikácia',
+    'installAppPromptMessage':
+        'Na telefóne a tablete sa EDU-AI asistent najlepšie používa v aplikácii. Chceš si ju nainštalovať, alebo zostať v prehliadači?',
+    'installAppPromptInstall': 'Nainštalovať aplikáciu',
+    'installAppPromptStay': 'Zostať v prehliadači',
     'eloInsufficientData': 'Na odhad v tejto oblasti zatiaľ nemáme dosť údajov.',
     'confidenceHigher': 'vyššia',
     'confidenceMedium': 'stredná',
@@ -4037,13 +4180,13 @@ class AppStrings {
     'courseTabAbout': 'O kurze',
     'courseTabSkills': 'Zručnosti',
     'courseTabStats': 'Štatistiky',
-    'courseSaveButton': 'Uložiť kurz',
     'courseShowAllLessons': 'Zobraziť všetky lekcie ({count})',
     'courseShowFewerLessons': 'Zobraziť menej',
     'courseOpenLesson': 'Otvoriť',
     'courseSkillsInCourse': 'Zručnosti v kurze',
     'courseSkillsEmpty':
         'Zručnosti sa objavia, keď vyriešiš pár úloh.',
+    'courseSkillsNone': 'Úlohy v tomto kurze nerozvíjajú žiadnu sledovanú zručnosť.',
     'courseStatsPlaceholder': 'Štatistiky kurzu ešte pripravujeme.',
     'courseDetailedStats': 'Zobraziť detailné štatistiky',
     'courseTrophyHint': 'Dokonči a získaj trofej!',
@@ -4206,7 +4349,6 @@ class AppStrings {
     'shopUnequip': 'Zložiť',
     'shopGetFree': 'Získať zadarmo',
     'shopPurchaseFailed': 'Predmet sa nepodarilo získať. Skontroluj pripojenie.',
-    'shopOfflineNotice': 'Bez pripojenia — ukazujeme uloženú ponuku.',
     'shopLoadFailed': 'Obchod sa nepodarilo načítať.',
     'shopEmptySlot': 'Zatiaľ tu nič nie je.',
     'shopRetry': 'Skúsiť znova',

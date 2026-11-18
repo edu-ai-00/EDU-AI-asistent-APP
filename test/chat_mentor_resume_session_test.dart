@@ -3,11 +3,12 @@
 // handed the student a brand-new empty chat while their transcript stayed under
 // the previous session id ("chat přes RAG se neuloží").
 //
-// resumeOrCreateSession() reopens the last conversation with that mentor, and
-// pulls the history first when this device has never seen it.
+// findSessionToResume() reopens the last conversation with that mentor, and
+// pulls the history first when this device has never seen it. When there is
+// none it creates nothing: the student's first message does (BR-ESXSZY).
 //
 //   flutter test test/chat_mentor_resume_session_test.dart
-import 'package:drift/drift.dart';
+import 'package:drift/drift.dart' hide isNull;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -92,9 +93,9 @@ void main() {
         ));
 
     final remote = _FakeRemote();
-    final session = await repoWith(remote).resumeOrCreateSession('u1', 'skolnik');
+    final session = await repoWith(remote).findSessionToResume('u1', 'skolnik');
 
-    expect(session.id, 'recent');
+    expect(session!.id, 'recent');
     expect(remote.createCalls, 0, reason: 'the link must not mint a session');
   });
 
@@ -118,16 +119,19 @@ void main() {
       },
     ]);
 
-    final session = await repoWith(remote).resumeOrCreateSession('u1', 'skolnik');
+    final session = await repoWith(remote).findSessionToResume('u1', 'skolnik');
 
-    expect(session.serverId, 42);
+    expect(session!.serverId, 42);
     expect(remote.createCalls, 0);
     final messages = await ChatLocalDataSource(db).getMessagesBySessionId(session.id);
     expect(messages.single.content, 'Jak omluvit absenci?');
   });
 
-  test('starts a chat when the student has never talked to this mentor',
+  test('creates nothing when the student has never talked to this mentor',
       () async {
+    // The chat opens without a session and its first message creates one
+    // (Rule 11.6); creating it here left an empty chat in the history of a
+    // student who followed the link and typed nothing (BR-ESXSZY).
     await db.into(db.chatSessionsTable).insert(const ChatSessionsTableCompanion(
           id: Value('other-mentor'),
           userId: Value('u1'),
@@ -135,10 +139,10 @@ void main() {
         ));
 
     final remote = _FakeRemote();
-    final session = await repoWith(remote).resumeOrCreateSession('u1', 'skolnik');
+    final session = await repoWith(remote).findSessionToResume('u1', 'skolnik');
 
-    expect(remote.createCalls, 1);
-    expect(session.persona, 'skolnik');
+    expect(session, isNull);
+    expect(remote.createCalls, 0);
   });
 
   test('ignores another user\'s conversation with the same mentor', () async {
@@ -150,9 +154,9 @@ void main() {
         ));
 
     final remote = _FakeRemote();
-    final session = await repoWith(remote).resumeOrCreateSession('u1', 'skolnik');
+    final session = await repoWith(remote).findSessionToResume('u1', 'skolnik');
 
-    expect(remote.createCalls, 1);
-    expect(session.id, isNot('someone-else'));
+    expect(session, isNull);
+    expect(remote.createCalls, 0);
   });
 }

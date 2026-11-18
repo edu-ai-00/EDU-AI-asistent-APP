@@ -76,8 +76,17 @@ void main() {
     expect(find.byType(CustomBottomNav), findsNothing);
     expect(tester.widget<SideNav>(find.byType(SideNav)).expanded, isTrue);
     expect(find.byType(DesktopTopBar), findsOneWidget);
-    expect(find.text('Přehled'), findsOneWidget);
-    expect(find.text('Podtitulek'), findsOneWidget);
+    // The sidebar's first item carries the same label, so look for the title
+    // inside the top bar only.
+    final topBar = find.byType(DesktopTopBar);
+    expect(
+      find.descendant(of: topBar, matching: find.text('Přehled')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: topBar, matching: find.text('Podtitulek')),
+      findsOneWidget,
+    );
   });
 
   test('grid columns grow with the available width, not the screen', () {

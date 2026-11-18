@@ -40,7 +40,8 @@ class NavDestination {
   /// time, so a `const` label here would freeze the first language used.
   final String Function() label;
 
-  /// Carries the unread-news count. A flag rather than a hard-coded index so
+  /// Carries the Novinky unread count (news + notifications). A flag rather
+  /// than a hard-coded index so
   /// the badge cannot end up on whatever destination drifts into slot 4.
   final bool showsNewsBadge;
 
@@ -82,8 +83,8 @@ final List<NavDestination> navDestinations = [
     iconAsset: 'assets/icons/kurzy.svg',
     label: () => AppStrings.navKurzy,
   ),
-  // "Notifications" in the design is this: there is no separate notification
-  // feed, the unread badge has always belonged to Novinky.
+  // "Notifications" in the design is this: Novinky *is* the notification feed
+  // (news + notifications, BR-KN9XUT), so its badge counts both.
   NavDestination(
     index: 4,
     iconAsset: 'assets/icons/novinky.svg',

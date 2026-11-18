@@ -19,6 +19,13 @@
 // Blocks with no usable GPF vectors cannot be ranked; they serve as fill-up
 // when the ranked candidates alone cannot reach [limit].
 //
+// With several domains chosen, steps 2–3 run once per domain over its own
+// share of the ten slots (BR-ZQABZN). Over the undivided pool the ranking is
+// blind to domains: whichever domain sits nearest the student's profile can
+// fill the whole [kGlobalQuizCandidateWindow] window and hand over a quiz
+// from one domain although every box is checked. A domain that cannot fill
+// its share leaves the slots to the others, so the quiz still holds ten.
+//
 // Task difficulty is the effective one the answer path uses (BR-697NCA): the
 // server's calibrated value per dimension where the last pull brought one,
 // the course content's elo_vector elsewhere.
@@ -113,9 +120,21 @@ List<double?> _engineProfile(List<double?> studentElo) => [
 class _RankableBlock {
   final ContentBlock block;
   final TaskCandidate task;
+
+  /// The engine-active dimensions behind the averages — what decides which
+  /// domain's share this block can fill.
+  final List<int> active;
   final double taskAvg;
   final double studentAvg;
-  const _RankableBlock(this.block, this.task, this.taskAvg, this.studentAvg);
+  const _RankableBlock(
+    this.block,
+    this.task,
+    this.active,
+    this.taskAvg,
+    this.studentAvg,
+  );
+
+  bool touches(GpfDomain domain) => active.any(domain.indices.contains);
 }
 
 /// [block] with the averages the rough band compares, or null when the engine
@@ -139,9 +158,41 @@ _RankableBlock? _rankable(
   return _RankableBlock(
     block,
     task,
+    active,
     taskSum / active.length,
     studentSum / active.length,
   );
+}
+
+/// Steps 2–3 over [ranked] for a budget of [limit] slots: the rough band,
+/// then the engine's draw from the nearest [kGlobalQuizCandidateWindow].
+List<ContentBlock> _drawRanked(
+  List<_RankableBlock> ranked,
+  List<double?> profile,
+  int limit,
+  Random rng,
+) {
+  if (limit <= 0 || ranked.isEmpty) return const [];
+
+  var banded = ranked
+      .where((r) => r.taskAvg >= r.studentAvg - kGlobalQuizEloLowerMargin)
+      .toList();
+  if (banded.length < limit) banded = ranked;
+  if (banded.length > limit) {
+    final capped = banded
+        .where((r) => r.taskAvg <= r.studentAvg + kGlobalQuizEloUpperMargin)
+        .toList();
+    if (capped.length >= limit) banded = capped;
+  }
+
+  final picks = EloEngine.selectRandomSubsetFromTopCandidates(
+    profilElo: profile,
+    candidates: [for (final r in banded) r.task],
+    count: limit,
+    topN: kGlobalQuizCandidateWindow,
+    random: rng,
+  );
+  return [for (final i in picks) banded[i].block];
 }
 
 /// Select up to [limit] blocks from [pool] for the student's [studentElo]
@@ -159,13 +210,14 @@ List<ContentBlock> selectGlobalQuizBlocks({
   if (limit <= 0) return [];
   if (pool.length <= limit) return List.of(pool);
 
+  final domains = domainCodes
+      .map(GpfStructure.domainByCode)
+      .whereType<GpfDomain>()
+      .toList();
+
   // 1. Domain filter — relaxed entirely when it starves the pool.
   var candidates = pool;
-  if (domainCodes.isNotEmpty) {
-    final domains = domainCodes
-        .map(GpfStructure.domainByCode)
-        .whereType<GpfDomain>()
-        .toList();
+  if (domains.isNotEmpty) {
     final filtered = pool
         .where((b) => domains.any((d) => blockTouchesDomain(b, d)))
         .toList();
@@ -184,40 +236,63 @@ List<ContentBlock> selectGlobalQuizBlocks({
     }
   }
 
-  // 2. Rough band, each side relaxed independently on shortage.
-  var banded = ranked
-      .where((r) => r.taskAvg >= r.studentAvg - kGlobalQuizEloLowerMargin)
-      .toList();
-  if (banded.length < limit) banded = ranked;
-  if (banded.length > limit) {
-    final capped = banded
-        .where((r) => r.taskAvg <= r.studentAvg + kGlobalQuizEloUpperMargin)
-        .toList();
-    if (capped.length >= limit) banded = capped;
+  final selected = <ContentBlock>[];
+  final chosen = <String>{};
+  void take(Iterable<ContentBlock> blocks) {
+    for (final block in blocks) {
+      if (selected.length >= limit) return;
+      if (chosen.add(block.blockId)) selected.add(block);
+    }
   }
 
-  // 3. The engine ranks the band nearest-first and samples the window
-  // without replacement; the indices point back into [banded].
-  final picks = EloEngine.selectRandomSubsetFromTopCandidates(
-    profilElo: profile,
-    candidates: [for (final r in banded) r.task],
-    count: limit,
-    topN: kGlobalQuizCandidateWindow,
-    random: rng,
-  );
-  final selected = [for (final i in picks) banded[i].block];
+  // 2–3. Per domain while the student asked for several of them, so no single
+  // domain can take the whole quiz (BR-ZQABZN). The order is shuffled: with a
+  // remainder to hand out, the extra slot must not always fall to N.
+  if (domains.length >= 2) {
+    final byDomain = <GpfDomain, List<_RankableBlock>>{};
+    for (final domain in domains) {
+      final blocks = ranked.where((r) => r.touches(domain)).toList();
+      if (blocks.isNotEmpty) byDomain[domain] = blocks;
+    }
+    if (byDomain.length >= 2) {
+      final order = byDomain.keys.toList()..shuffle(rng);
+      final share = limit ~/ order.length;
+      final remainder = limit % order.length;
+      for (var i = 0; i < order.length; i++) {
+        final quota = share + (i < remainder ? 1 : 0);
+        take(_drawRanked(
+          byDomain[order[i]]!
+              .where((r) => !chosen.contains(r.block.blockId))
+              .toList(),
+          profile,
+          quota,
+          rng,
+        ));
+      }
+    }
+  }
+
+  // The undivided draw: one chosen domain or none, and the slots a domain
+  // left behind because its own candidates ran out.
+  if (selected.length < limit) {
+    take(_drawRanked(
+      ranked.where((r) => !chosen.contains(r.block.blockId)).toList(),
+      profile,
+      limit - selected.length,
+      rng,
+    ));
+  }
 
   // Fill up from whatever was left over (unrankable blocks, then the rest of
   // the ranked pool) so a thin candidate set still yields a full quiz.
   if (selected.length < limit) {
-    final chosen = selected.map((b) => b.blockId).toSet();
     final leftovers = <ContentBlock>[
       ...unrankable,
-      ...banded.map((r) => r.block),
+      ...ranked.map((r) => r.block),
       ...candidates,
-    ].where((b) => chosen.add(b.blockId)).toList()
+    ].where((b) => !chosen.contains(b.blockId)).toList()
       ..shuffle(rng);
-    selected.addAll(leftovers.take(limit - selected.length));
+    take(leftovers);
   }
 
   return selected;

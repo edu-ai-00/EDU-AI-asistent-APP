@@ -93,13 +93,18 @@ class _LessonDetailPageState extends ConsumerState<LessonDetailPage> {
   Future<void>? _pendingSave;
   bool _isPopping = false;
 
+  /// Background gradings a quiz block announced before completing
+  /// (BR-5Q4MA3), by block index.
+  final Map<int, Future<BlockGrading>> _deferredGradings = {};
+
+  /// XP and ELO still waiting on a verdict — see [_bookWhenGraded].
+  final Set<Future<void>> _pendingGradings = {};
+
   /// Safely pop: await any pending DB writes first so the parent page reads fresh data.
   Future<void> _safePop([dynamic result]) async {
     if (_isPopping) return;
     _isPopping = true;
-    if (_pendingSave != null) {
-      await _pendingSave;
-    }
+    await _awaitPendingWrites();
     // Flush any in-memory progress (step_progress, completed blocks) that
     // hasn't been persisted yet — e.g. when a display block's deferred
     // onBlockCompleted callback was missed because the user popped early.
@@ -148,6 +153,12 @@ class _LessonDetailPageState extends ConsumerState<LessonDetailPage> {
   // Step progress for step-based blocks (blockId → StepProgressData)
   final Map<String, StepProgressData> _stepProgress = {};
 
+  /// Photos picked in step-based blocks and not yet sent, by block id. Held
+  /// here because the lazy list tears a block's engine down when it scrolls
+  /// away (BR-PW5EQK). Memory only, like [_pickedPhotos]: the picture never
+  /// goes into saved progress.
+  final Map<String, PickedAnswerPhoto> _stepPhotos = {};
+
   // Whether saved progress has been loaded from DB (blocks rendering before this)
   bool _progressLoaded = false;
 
@@ -156,12 +167,29 @@ class _LessonDetailPageState extends ConsumerState<LessonDetailPage> {
 
   // Debounces the progress save while the user is typing an open-question
   // answer, so an in-progress draft survives leaving/reloading the lesson
-  // (BR-A7AHKR) without hammering the DB on every keystroke.
-  Timer? _openAnswerSaveDebounce;
+  // (BR-A7AHKR) without hammering the DB on every keystroke. Step-based
+  // blocks share it for their unchecked answers (BR-PW5EQK).
+  Timer? _draftSaveDebounce;
 
   // Tracks how many times a block has been reset via cross-block jump.
   // Used as part of the BlockStepEngine key to force State recreation.
   final Map<String, int> _blockResetCounter = {};
+
+  // Blocks a forward go_to has already moved past, by index. The engine signals
+  // the jump straight away but defers onBlockCompleted to a post-frame callback
+  // (BlockStepEngine._completeBlock), so by the time that callback lands
+  // _currentBlockIndex sits on the jump target and _confirmBlock's
+  // stale-callback guard would throw the answered block away — losing its
+  // completion, its XP and its ELO (BR-4XS5FD). _navigateToBlock books the
+  // completion itself and parks the index here so the callback can still pay
+  // out XP/ELO without moving the cursor back.
+  final Set<int> _jumpedFromBlocks = {};
+
+  // Blocks a forward go_to jumped over, by id. They are booked as completed so
+  // the lesson can finish (BR-4XS5FD), but nobody worked through them, so the
+  // lesson leaves them out instead of drawing them done with their full content
+  // (BR-UM42RU). Saved as `skipped_blocks` so a reopened lesson hides them too.
+  final Set<String> _skippedBlockIds = {};
 
   // Per-step bookmark/like/dislike state for display blocks.
   // Key: blockId → set of stepIds that have the action active.
@@ -286,7 +314,7 @@ class _LessonDetailPageState extends ConsumerState<LessonDetailPage> {
     // Via the cached instance — `ref` must not be used in dispose() (Riverpod
     // throws, aborting the rest of this method).
     _workTimeTracker.clearLocation();
-    _openAnswerSaveDebounce?.cancel();
+    _draftSaveDebounce?.cancel();
     _scrollController.dispose();
     for (final controller in _textControllers.values) {
       controller.dispose();
@@ -312,23 +340,61 @@ class _LessonDetailPageState extends ConsumerState<LessonDetailPage> {
     return widget.lessonIndex >= widget.course.lessons.length - 1;
   }
 
+  /// Mark a block completed without touching the cursor, XP or ELO.
+  ///
+  /// Used by cross-block jumps, where the block either finished on its own
+  /// (the one the go_to fired from) or was skipped over by the author's jump.
+  void _markBlockCompleted(int index) {
+    if (!_useContentBlocks || index < 0 || index >= _contentBlocks.length) {
+      return;
+    }
+    if (_contentBlocks[index].isCompleted) {
+      return;
+    }
+    _contentBlocks[index] =
+        _contentBlocks[index].copyWith(isCompleted: true);
+  }
+
+  /// Book XP and ELO for a block a forward go_to has already moved past.
+  ///
+  /// [_navigateToBlock] marked it completed and advanced the cursor to the
+  /// jump target, so [_confirmBlock] would refuse this late callback. Everything
+  /// but the cursor move still has to happen (BR-4XS5FD).
+  Future<void> _bookJumpedBlock(int index,
+      {int earnedXp = 0, double scoreKoef = 1.0}) async {
+    _stampConfirmedAt(index);
+    final saveFuture = _doSaveAndMark(
+      _allBlocksCompleted,
+      earnedXp: earnedXp,
+      scoreKoef: scoreKoef,
+      blockIndex: index,
+    );
+    _pendingSave = saveFuture;
+    await saveFuture;
+  }
+
+  /// Record the answer-submit moment for a block: its confirmed_at plus the
+  /// ts_bubble_open → ts_answer_submit pair the step engine never reports, so
+  /// the ELO log carries a time-on-task.
+  void _stampConfirmedAt(int index) {
+    if (!_useContentBlocks || index < 0 || index >= _contentBlocks.length) {
+      return;
+    }
+    final blockId = _contentBlocks[index].blockId;
+    final submittedAt = DateTime.now().toUtc();
+    _blockConfirmedAt[blockId] = submittedAt.toIso8601String();
+    final openedAt = DateTime.tryParse(_blockTimestamps[blockId] ?? '');
+    final ts = _blockTimestampData.putIfAbsent(index, () => {});
+    ts['ts_bubble_open'] ??= openedAt?.millisecondsSinceEpoch;
+    ts['ts_answer_submit'] ??= submittedAt.millisecondsSinceEpoch;
+  }
+
   Future<void> _confirmBlock(int index, {int earnedXp = 0, double scoreKoef = 1.0}) async {
     if (index != _currentBlockIndex) {
       return;
     }
 
-    // The answer-submit moment. It is saved as the block's confirmed_at and
-    // also fills the ts_bubble_open → ts_answer_submit pair, which the step
-    // engine never reports — so the ELO log finally carries a time-on-task.
-    if (_useContentBlocks && index >= 0 && index < _contentBlocks.length) {
-      final blockId = _contentBlocks[index].blockId;
-      final submittedAt = DateTime.now().toUtc();
-      _blockConfirmedAt[blockId] = submittedAt.toIso8601String();
-      final openedAt = DateTime.tryParse(_blockTimestamps[blockId] ?? '');
-      final ts = _blockTimestampData.putIfAbsent(index, () => {});
-      ts['ts_bubble_open'] ??= openedAt?.millisecondsSinceEpoch;
-      ts['ts_answer_submit'] ??= submittedAt.millisecondsSinceEpoch;
-    }
+    _stampConfirmedAt(index);
 
     // Wrong atomic answer → seed a Practice (Cvičení) card before advancing.
     // V2 step blocks handle this via BlockStepEngine's onWrongAnswer callback.
@@ -384,24 +450,22 @@ class _LessonDetailPageState extends ConsumerState<LessonDetailPage> {
     // Save progress locally - MUST await to avoid race condition
     await _saveProgress();
 
-    // Award XP AFTER progress is persisted so the read-modify-write in
-    // _awardBlockXp sees the freshly-saved completed_blocks.
-    if (earnedXp > 0) {
-      await _awardBlockXp(earnedXp);
-    }
-
-    // Update ELO profile for adaptive learning (runs on blocks with GPF vectors)
-    if (blockIndex != null) {
-      // Apply hint/help penalty to score:
-      // hint used → cap at 0.75, help used → cap at 0.5
-      final hintLevel = _hintUsage[blockIndex] ?? 0;
-      double adjustedScore = scoreKoef;
-      if (hintLevel >= 2) {
-        adjustedScore = adjustedScore.clamp(0.0, 0.5);
-      } else if (hintLevel >= 1) {
-        adjustedScore = adjustedScore.clamp(0.0, 0.75);
+    // An open answer still being graded (BR-5Q4MA3): the block's XP and ELO
+    // wait for the verdict, everything else is booked now.
+    final grading =
+        blockIndex == null ? null : _deferredGradings.remove(blockIndex);
+    if (grading != null) {
+      _bookWhenGraded(blockIndex!, grading);
+    } else {
+      // Award XP AFTER progress is persisted so the read-modify-write in
+      // _awardBlockXp sees the freshly-saved completed_blocks.
+      if (earnedXp > 0) {
+        await _awardBlockXp(earnedXp);
       }
-      await _updateElo(blockIndex, adjustedScore);
+
+      if (blockIndex != null) {
+        await _updateBlockElo(blockIndex, scoreKoef);
+      }
     }
 
     // Check if this was the last block - mark lesson complete
@@ -412,6 +476,58 @@ class _LessonDetailPageState extends ConsumerState<LessonDetailPage> {
 
     // Sync after each block so progress is recoverable on refresh/device switch
     ref.read(syncServiceProvider).sync();
+  }
+
+  /// XP and ELO for a block whose open answer was still being graded when it
+  /// completed (BR-5Q4MA3).
+  ///
+  /// Leaving the lesson waits for this the way it waits for [_pendingSave]:
+  /// both write through the page, which has to still be there.
+  void _bookWhenGraded(int blockIndex, Future<BlockGrading> grading) {
+    Future<void> book() async {
+      try {
+        final outcome = await grading;
+        if (!mounted) return;
+        // The verdict belongs in the saved step answers too — the engine
+        // reported them before it had one.
+        _saveStepProgress(blockIndex, outcome.progress);
+        await _saveProgress();
+        if (outcome.earnedXp > 0) {
+          await _awardBlockXp(outcome.earnedXp);
+        }
+        await _updateBlockElo(blockIndex, outcome.scoreKoef);
+        ref.read(syncServiceProvider).sync();
+      } catch (e, st) {
+        silentLog('lesson_detail_page:deferred_grading', e, st);
+      }
+    }
+
+    final pending = book();
+    _pendingGradings.add(pending);
+    unawaited(pending.whenComplete(() => _pendingGradings.remove(pending)));
+  }
+
+  /// Update ELO profile for adaptive learning (runs on blocks with GPF vectors)
+  Future<void> _updateBlockElo(int blockIndex, double scoreKoef) async {
+    // Apply hint/help penalty to score:
+    // hint used → cap at 0.75, help used → cap at 0.5
+    final hintLevel = _hintUsage[blockIndex] ?? 0;
+    double adjustedScore = scoreKoef;
+    if (hintLevel >= 2) {
+      adjustedScore = adjustedScore.clamp(0.0, 0.5);
+    } else if (hintLevel >= 1) {
+      adjustedScore = adjustedScore.clamp(0.0, 0.75);
+    }
+    await _updateElo(blockIndex, adjustedScore);
+  }
+
+  /// Writes leaving the lesson has to let finish: the last block's save, and
+  /// any background grading still to book (BR-5Q4MA3).
+  Future<void> _awaitPendingWrites() async {
+    if (_pendingSave != null) await _pendingSave;
+    if (_pendingGradings.isNotEmpty) {
+      await Future.wait(_pendingGradings.toList());
+    }
   }
 
   /// Award XP for a completed block.
@@ -699,22 +815,23 @@ class _LessonDetailPageState extends ConsumerState<LessonDetailPage> {
         // Seed FSRS practice cards for this lesson's default_practice
         // blocks (no-op for blocks that already have a card).
         try {
-          final createdCards =
-              await ref.read(practiceRepositoryProvider).createCardsFromLesson(
-                    userId: user.id,
-                    courseId: widget.course.id,
-                    lessonId: widget.lesson.id,
-                    blocks: widget.course.getBlocksForLesson(widget.lesson.id),
-                  );
+          await ref.read(practiceRepositoryProvider).createCardsFromLesson(
+                userId: user.id,
+                courseId: widget.course.id,
+                lessonId: widget.lesson.id,
+                blocks: widget.course.getBlocksForLesson(widget.lesson.id),
+              );
           // Cards are written straight to Drift; the practice queue providers
           // are plain (cached) FutureProviders, so without this the dashboard
           // count and the practice quiz keep showing the stale pre-lesson value
           // until the next reload. Invalidate so they recompute now. (BR-7R5NFZ)
-          if (createdCards > 0) {
-            ref.invalidate(practiceQueueProvider);
-            // The practice picker reads the cards itself (BR-27AEMT).
-            ref.invalidate(practiceScopeProvider);
-          }
+          // Even when no card was created: finishing the lesson also releases
+          // cards that already existed for it but were held back (BR-B5QBBS).
+          ref.invalidate(practiceQueueProvider);
+          // The practice picker and the bonus set read the cards themselves
+          // (BR-27AEMT).
+          ref.invalidate(practiceScopeProvider);
+          ref.invalidate(practiceBonusQueueProvider);
         } catch (e, st) {
           silentLog('lesson_detail_page:seed_cards', e, st);
         }
@@ -860,7 +977,7 @@ class _LessonDetailPageState extends ConsumerState<LessonDetailPage> {
   Future<void> _navigateToNextLesson() async {
     // Wait for pending save (_markLessonAsCompleted) to finish before
     // navigating — otherwise is_completed never gets written to DB.
-    if (_pendingSave != null) await _pendingSave;
+    await _awaitPendingWrites();
 
     final nextLessonIndex = widget.lessonIndex + 1;
     final totalLessons = widget.course.lessons.length;
@@ -1073,6 +1190,9 @@ class _LessonDetailPageState extends ConsumerState<LessonDetailPage> {
           ...existingLessonProgress,
           'lesson_id': widget.lesson.id,
           'completed_blocks': completedBlockIds,
+          // Always written, so a block a backward jump put back in play is
+          // dropped from the saved list too (BR-UM42RU).
+          'skipped_blocks': _skippedBlockIds.toList(),
           'block_answers': blockAnswers,
           'current_block_index': _currentBlockIndex,
           if (stepProgressJson.isNotEmpty) 'step_progress': stepProgressJson,
@@ -1164,6 +1284,14 @@ class _LessonDetailPageState extends ConsumerState<LessonDetailPage> {
       final completedBlockIds = (lessonProgress['completed_blocks'] as List<dynamic>?)
           ?.map((id) => id as String)
           .toSet() ?? {};
+
+      // Blocks a forward jump skipped stay hidden on reopen (BR-UM42RU). Only
+      // while they still count as done: a skipped block is a completed one.
+      final skippedRaw = lessonProgress['skipped_blocks'];
+      if (skippedRaw is List) {
+        _skippedBlockIds.addAll(
+            skippedRaw.whereType<String>().where(completedBlockIds.contains));
+      }
 
       // Load saved answers (block_answers can be [] if empty instead of {})
       final blockAnswersRaw = lessonProgress['block_answers'];
@@ -1682,7 +1810,7 @@ class _LessonDetailPageState extends ConsumerState<LessonDetailPage> {
   /// student is on (BR-JHDNB3). Null for atomic blocks, which have no steps.
   void _showHintDialog(int index, [String? stepId]) {
     final block = _useContentBlocks ? _contentBlocks[index] : null;
-    if (block == null || !block.hasHintForStep(stepId)) return;
+    if (block == null || !block.hasHintOrHelpForStep(stepId)) return;
 
     final practiceUnavailable =
         practiceOptionUnavailable(block: block, course: widget.course);
@@ -1907,6 +2035,13 @@ class _LessonDetailPageState extends ConsumerState<LessonDetailPage> {
                                     .clamp(0, _blockCount)
                                 : _currentBlockIndex + 1),
                         itemBuilder: (context, index) {
+                          // The author's jump went past this block: the lesson
+                          // skips it, it does not show it done (BR-UM42RU).
+                          if (_useContentBlocks &&
+                              _skippedBlockIds
+                                  .contains(_contentBlocks[index].blockId)) {
+                            return SizedBox.shrink(key: _cardKeys[index]);
+                          }
                           final isCompleted = _useContentBlocks
                               ? _contentBlocks[index].isCompleted
                               : _legacyBlocks[index].isCompleted;
@@ -2025,6 +2160,7 @@ class _LessonDetailPageState extends ConsumerState<LessonDetailPage> {
         block: block,
         exportMode: _exportMode,
         hideEvaluation: _exportMode == ExportMode.quizV2 && !widget.course.quizEvaluate,
+        onGradingDeferred: (grading) => _deferredGradings[index] = grading,
         isCurrent: isCurrent,
         isCompleted: block.isCompleted,
         onBlockCompleted: ({int earnedXp = 0, double scoreKoef = 1.0, String? mark, DateTime? tsBubbleOpen, DateTime? tsAnswerClick, DateTime? tsAnswerSubmit, int attemptCount = 0}) {
@@ -2034,12 +2170,25 @@ class _LessonDetailPageState extends ConsumerState<LessonDetailPage> {
             'ts_answer_submit': tsAnswerSubmit?.millisecondsSinceEpoch,
             'attempt_count': attemptCount,
           };
-          _confirmBlock(index, earnedXp: earnedXp, scoreKoef: scoreKoef);
+          if (_jumpedFromBlocks.remove(index)) {
+            _bookJumpedBlock(index, earnedXp: earnedXp, scoreKoef: scoreKoef);
+          } else {
+            _confirmBlock(index, earnedXp: earnedXp, scoreKoef: scoreKoef);
+          }
         },
-        onCrossBlockNavigate: (blockId) => _navigateToBlock(blockId),
+        onCrossBlockNavigate: (blockId) =>
+            _navigateToBlock(blockId, fromIndex: index),
         onChatRequested: () => _openChatWithContext(index),
         onStepProgress: (progress) => _saveStepProgress(index, progress),
         savedProgress: _stepProgress[block.blockId],
+        pickedPhoto: _stepPhotos[block.blockId],
+        onPickedPhotoChanged: (photo) {
+          if (photo == null) {
+            _stepPhotos.remove(block.blockId);
+          } else {
+            _stepPhotos[block.blockId] = photo;
+          }
+        },
         // Block-level actions (exercise/question blocks)
         onBookmarkToggle: () => _toggleBookmark(index),
         onLikeToggle: () => _toggleLike(index),
@@ -2139,8 +2288,12 @@ class _LessonDetailPageState extends ConsumerState<LessonDetailPage> {
 
   /// Navigate to a specific block by ID (for cross-block jumps).
   /// When jumping backward, resets all blocks from the target through
-  /// the current position so the user must redo them.
-  Future<void> _navigateToBlock(String blockId) async {
+  /// [fromIndex] so the user must redo them.
+  ///
+  /// [fromIndex] is the block the go_to fired from. Its engine has finished —
+  /// the jump is the answer's own next action — so it is booked as completed
+  /// here rather than being left to the deferred callback (BR-4XS5FD).
+  Future<void> _navigateToBlock(String blockId, {required int fromIndex}) async {
     final targetIndex = _contentBlocks.indexWhere((b) => b.blockId == blockId);
     if (targetIndex < 0) {
       // Cross-lesson jump: find which lesson contains this block
@@ -2149,6 +2302,7 @@ class _LessonDetailPageState extends ConsumerState<LessonDetailPage> {
         return;
       }
       // Save current lesson's progress before jumping to another lesson
+      _markBlockCompleted(fromIndex);
       await _saveProgress();
       final targetLesson = _course.lessons[target.lessonIndex];
       if (!mounted) return;
@@ -2169,21 +2323,41 @@ class _LessonDetailPageState extends ConsumerState<LessonDetailPage> {
     }
 
     // Determine the range of blocks to reset.
-    // Backward jump: reset target through current (inclusive).
+    // Backward jump: reset target through the block jumped from (inclusive).
     // Forward jump: only reset the target block itself.
     final resetFrom = targetIndex;
-    final resetTo = targetIndex < _currentBlockIndex
-        ? _currentBlockIndex
-        : targetIndex;
+    final resetTo = targetIndex < fromIndex ? fromIndex : targetIndex;
 
     for (int i = resetFrom; i <= resetTo; i++) {
       final bid = _contentBlocks[i].blockId;
       _stepProgress.remove(bid);
+      _stepPhotos.remove(bid);
+      // Back in play: the student may now walk through it after all.
+      _skippedBlockIds.remove(bid);
       _contentBlocks[i] = _contentBlocks[i].copyWith(
         isCompleted: false,
         selectedOptionId: null,
       );
       _blockResetCounter[bid] = (_blockResetCounter[bid] ?? 0) + 1;
+    }
+
+    // A forward jump leaves the blocks in between untouched. They would stay
+    // incomplete for good, so _allBlocksCompleted could never hold and the
+    // lesson was impossible to finish — stuck on e.g. 4/6 (BR-4XS5FD). The
+    // author sent the student past them on purpose, so count them as done.
+    // They earn no XP and log no ELO: nobody answered them.
+    if (targetIndex > fromIndex) {
+      _markBlockCompleted(fromIndex);
+      for (int i = fromIndex + 1; i < targetIndex; i++) {
+        // A block the student already finished stays a finished block.
+        if (!_contentBlocks[i].isCompleted) {
+          _skippedBlockIds.add(_contentBlocks[i].blockId);
+        }
+        _markBlockCompleted(i);
+      }
+      // The answered block still owes its XP and ELO; the engine reports those
+      // in a post-frame callback that arrives after the cursor has moved on.
+      _jumpedFromBlocks.add(fromIndex);
     }
 
     setState(() {
@@ -2198,6 +2372,22 @@ class _LessonDetailPageState extends ConsumerState<LessonDetailPage> {
   /// Save step progress for a step-based block
   void _saveStepProgress(int index, StepProgressData progress) {
     _stepProgress[progress.blockId] = progress;
+    // A block still in progress — an answer typed or picked but not checked
+    // yet — is written soon after, so it survives leaving the lesson in any
+    // way, not only by the back arrow (BR-PW5EQK). A finished block is saved
+    // by _confirmBlock already.
+    if (!progress.isBlockCompleted) _scheduleDraftSave();
+  }
+
+  /// Save progress once the student pauses (BR-A7AHKR, BR-PW5EQK).
+  void _scheduleDraftSave() {
+    _draftSaveDebounce?.cancel();
+    _draftSaveDebounce = Timer(const Duration(milliseconds: 600), () async {
+      // A block being confirmed rewrites the same row, XP after progress; a
+      // save landing in between would put back the XP total it read before.
+      await _awaitPendingWrites();
+      if (mounted) await _saveProgress();
+    });
   }
 
   Widget _buildAtomicDisplayCard(
@@ -2296,11 +2486,7 @@ class _LessonDetailPageState extends ConsumerState<LessonDetailPage> {
       _contentBlocks[index] =
           _contentBlocks[index].copyWith(selectedOptionId: controller.text);
     });
-    _openAnswerSaveDebounce?.cancel();
-    _openAnswerSaveDebounce = Timer(
-      const Duration(milliseconds: 600),
-      () => unawaited(_saveProgress()),
-    );
+    _scheduleDraftSave();
   }
 
   /// Check open answer and mark block as completed.
@@ -2419,7 +2605,7 @@ class _LessonDetailPageState extends ConsumerState<LessonDetailPage> {
 
     // Flush the checked answer now rather than waiting on the typing debounce,
     // so it survives leaving the lesson before confirming the block (BR-A7AHKR).
-    _openAnswerSaveDebounce?.cancel();
+    _draftSaveDebounce?.cancel();
     unawaited(_saveProgress());
 
     _recordOpenAnswer(index, block, question, userAnswer, photoName: photoName);
@@ -2561,7 +2747,7 @@ class _LessonDetailPageState extends ConsumerState<LessonDetailPage> {
       onDislike: () => _toggleDislike(index),
       // Legacy/atomic cards are not driven by BlockStepEngine, so the block's
       // own cursor is the only step they have — the same one the row's
-      // `block.hasHint` gate reads.
+      // `block.hasHintOrHelp` gate reads.
       onShowHint: () =>
           _showHintDialog(index, _contentBlocks[index].currentStep?.stepId),
       onMarkAnswered: () => setState(() => _answeredBlocks.add(index)),
@@ -2971,7 +3157,7 @@ class _LessonDetailPageState extends ConsumerState<LessonDetailPage> {
 
   /// Open another lesson of this course from the rail.
   Future<void> _openLesson(Lesson lesson, int index) async {
-    if (_pendingSave != null) await _pendingSave;
+    await _awaitPendingWrites();
     if (!mounted) return;
     Navigator.pushReplacement(
       context,
@@ -3036,8 +3222,8 @@ String buildLessonChatContext({
       blockContent = block.displayContent;
     }
   }
-  // Drop media links before the 400-char budget is measured, so a long image
-  // URL can no longer crowd out the task statement itself (BR-KFHPAR).
+  // Drop media links before the budget is measured, so a long image URL can no
+  // longer crowd out the task statement itself (BR-KFHPAR).
   blockContent = sanitizeAiContext(blockContent);
 
   // For question blocks, include the options for the CURRENT question only.
@@ -3070,7 +3256,7 @@ String buildLessonChatContext({
     '',
     if (blockContent.isNotEmpty)
       AppStrings.chatContextHelpTaskContent(
-          blockContent.length > 400 ? '${blockContent.substring(0, 400)}...' : blockContent),
+          limitAiContext(blockContent, kAiTaskContentMaxChars)),
     if (questionInfo.isNotEmpty) questionInfo,
     if (hint.isNotEmpty) AppStrings.chatContextHelpHint(hint),
     if (help.isNotEmpty) AppStrings.chatContextHelpDetail(help),
@@ -3084,7 +3270,12 @@ String buildLessonChatContext({
     else
       AppStrings.chatContextFallbackPrompt,
   ];
-  return contextParts
-      .where((s) => s.isNotEmpty || contextParts.indexOf(s) == 1)
-      .join('\n');
+  // Backstop: the API rejects a context field over 8000 characters outright,
+  // so a freak block cannot turn a truncated prompt into no answer at all.
+  return limitAiContext(
+    contextParts
+        .where((s) => s.isNotEmpty || contextParts.indexOf(s) == 1)
+        .join('\n'),
+    kAiContextMaxChars,
+  );
 }

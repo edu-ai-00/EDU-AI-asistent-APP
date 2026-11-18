@@ -6,9 +6,9 @@ import '../core/database/app_database.dart';
 import '../core/providers/core_providers.dart';
 import '../core/strings/app_strings.dart';
 import '../core/theme/app_theme.dart';
+import '../core/util/silent_log.dart';
 import '../models/chat_models.dart';
 import '../routing/deep_link.dart';
-import '../widgets/filter_chip_row.dart';
 import 'chat_detail_page.dart';
 import 'new_chat_page.dart';
 import '../core/layout/breakpoints.dart';
@@ -23,21 +23,30 @@ class ChatyPage extends ConsumerStatefulWidget {
 
 /// The conversation shown in the wide layout's right-hand pane.
 class _OpenChat {
+  /// Empty for a new chat until its first message creates the session.
   final String sessionId;
   final String title;
   final ChatPersona persona;
 
-  const _OpenChat({
+  /// The mentor a new chat is created with — see [ChatDetailPage.mentorSlug].
+  final String? mentorSlug;
+
+  /// Keys the pane, so switching conversations rebuilds its state (messages,
+  /// stream subscription) instead of reusing the previous chat's. A new chat
+  /// has no session id to key by yet, and keeps its key once the first message
+  /// gives it one, so the answer streaming in is not torn down.
+  final Key paneKey;
+
+  _OpenChat({
     required this.sessionId,
     required this.title,
     required this.persona,
-  });
+    this.mentorSlug,
+    Key? paneKey,
+  }) : paneKey = paneKey ?? ValueKey(sessionId);
 }
 
 class _ChatyPageState extends ConsumerState<ChatyPage> {
-  int _selectedFilterIndex = 0;
-  final List<String> _filters = [AppStrings.filterAll, AppStrings.filterInProgress, AppStrings.chatyEndedFilter];
-
   /// Width of the conversation list beside the open chat.
   static const double _listWidth = 360;
 
@@ -60,7 +69,22 @@ class _ChatyPageState extends ConsumerState<ChatyPage> {
   /// Open a conversation: a pane on wide, a pushed route on a phone.
   void _openSession(BuildContext context, _OpenChat chat) {
     if (_isWide) {
-      setState(() => _openChat = chat);
+      final current = _openChat;
+      // Already in the pane — a new chat whose first message just put it in
+      // the list, say — so it keeps the pane: swapping it would cut off the
+      // answer streaming in.
+      final samePane = current != null &&
+          chat.sessionId.isNotEmpty &&
+          chat.sessionId == current.sessionId;
+      setState(() => _openChat = samePane
+          ? _OpenChat(
+              sessionId: chat.sessionId,
+              title: chat.title,
+              persona: chat.persona,
+              mentorSlug: current.mentorSlug,
+              paneKey: current.paneKey,
+            )
+          : chat);
       return;
     }
     Navigator.push(
@@ -70,9 +94,25 @@ class _ChatyPageState extends ConsumerState<ChatyPage> {
           sessionId: chat.sessionId,
           sessionTitle: chat.title,
           persona: chat.persona,
+          mentorSlug: chat.mentorSlug,
         ),
       ),
     );
+  }
+
+  /// A new chat in the pane got its session from the first message.
+  void _onPaneSessionCreated(String sessionId) {
+    final chat = _openChat;
+    if (!mounted || chat == null || chat.sessionId.isNotEmpty) return;
+    setState(() {
+      _openChat = _OpenChat(
+        sessionId: sessionId,
+        title: chat.title,
+        persona: chat.persona,
+        mentorSlug: chat.mentorSlug,
+        paneKey: chat.paneKey,
+      );
+    });
   }
 
   @override
@@ -102,13 +142,12 @@ class _ChatyPageState extends ConsumerState<ChatyPage> {
           child: _openChat == null
               ? _buildNoChatSelected()
               : ChatDetailPage(
-                  // Keyed by session so switching conversations rebuilds the
-                  // state (messages, stream subscription) instead of reusing
-                  // the previous chat's.
-                  key: ValueKey(_openChat!.sessionId),
+                  key: _openChat!.paneKey,
                   sessionId: _openChat!.sessionId,
                   sessionTitle: _openChat!.title,
                   persona: _openChat!.persona,
+                  mentorSlug: _openChat!.mentorSlug,
+                  onSessionCreated: _onPaneSessionCreated,
                   embedded: true,
                 ),
         ),
@@ -167,17 +206,9 @@ class _ChatyPageState extends ConsumerState<ChatyPage> {
               ),
             const SizedBox(height: 16),
             _buildHeader(context),
-            const SizedBox(height: 16),
-            // Filter chips
-            FilterChipRow(
-              labels: _filters,
-              selectedIndex: _selectedFilterIndex,
-              onSelected: (index) {
-                setState(() {
-                  _selectedFilterIndex = index;
-                });
-              },
-            ),
+            // No status filters here (BR-4JVEEA): the Všechny / Probíhající /
+            // Ukončené chips never filtered anything, and a chat has no
+            // "ended" state to filter by — any conversation can be continued.
             const SizedBox(height: 16),
             // Divider
             Padding(
@@ -449,7 +480,7 @@ class _ChatyPageState extends ConsumerState<ChatyPage> {
     // Resume rather than start over: the link is a bookmark, not a "new chat"
     // button, and on the web build reopening it is how a student comes back to
     // the conversation (BR-VC5HPV).
-    await _createSessionAndNavigate(mentor, context, resumeExisting: true);
+    await _openMentorChat(mentor, context, resumeExisting: true);
   }
 
   /// The mentor list used to be a bottom sheet of emoji tiles; it is now the
@@ -459,45 +490,52 @@ class _ChatyPageState extends ConsumerState<ChatyPage> {
     final mentor = await showNewChatPicker(context);
     if (mentor == null || !context.mounted) return;
 
-    await _createSessionAndNavigate(mentor, context);
+    await _openMentorChat(mentor, context);
   }
 
+  /// Open a chat with [mentor] without creating anything: the first message
+  /// creates the session (Rule 11.6). Creating it here, the moment the mentor
+  /// was picked, left an empty chat in the history of every student who backed
+  /// out without typing (BR-ESXSZY).
+  ///
   /// [resumeExisting] reopens the student's last conversation with this mentor
   /// instead of starting another one — what a `/chat/:mentor` link means.
-  Future<void> _createSessionAndNavigate(
+  Future<void> _openMentorChat(
     ChatMentor mentor,
     BuildContext context, {
     bool resumeExisting = false,
   }) async {
-    try {
-      final chatRepo = ref.read(chatRepositoryProvider);
-      final user = await ref.read(activeUserProvider.future);
-      if (user == null) return;
-
-      final session = resumeExisting
-          ? await chatRepo.resumeOrCreateSession(user.id, mentor.slug)
-          : await chatRepo.createSession(user.id, mentor.slug);
-
-      if (context.mounted) {
-        _openSession(
-          context,
-          _OpenChat(
-            sessionId: session.id,
-            title: session.title.isNotEmpty ? session.title : mentor.name,
-            persona: mentor.persona,
-          ),
-        );
-      }
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(AppStrings.chatRequiresInternet),
-            backgroundColor: Colors.red.shade700,
-          ),
-        );
+    ChatSessionsTableData? existing;
+    if (resumeExisting) {
+      try {
+        final user = await ref.read(activeUserProvider.future);
+        if (user == null) return;
+        existing = await ref
+            .read(chatRepositoryProvider)
+            .findSessionToResume(user.id, mentor.slug);
+      } catch (e, st) {
+        // Nothing to resume then; the student starts a new chat.
+        silentLog('chaty_page', e, st);
       }
     }
+    if (!context.mounted) return;
+
+    _openSession(
+      context,
+      existing != null
+          ? _OpenChat(
+              sessionId: existing.id,
+              title: existing.title.isNotEmpty ? existing.title : mentor.name,
+              persona: mentor.persona,
+            )
+          : _OpenChat(
+              sessionId: '',
+              title: mentor.name,
+              persona: mentor.persona,
+              mentorSlug: mentor.slug,
+              paneKey: UniqueKey(),
+            ),
+    );
   }
 
   // ---------------------------------------------------------------------------

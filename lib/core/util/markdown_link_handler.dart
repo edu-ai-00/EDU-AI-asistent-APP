@@ -23,6 +23,11 @@ import 'shell_route.dart';
 const _nativeAppHosts = <String>{'app.edu-ai.eu'};
 
 /// Whether [uri] points at this app rather than somewhere else on the internet.
+///
+/// Public for the notification deep-link resolver, which accepts the same
+/// links a news article may carry.
+bool isOwnAppUri(Uri uri) => _isOwnHost(uri);
+
 bool _isOwnHost(Uri uri) {
   if (!uri.hasAuthority) return true; // relative, e.g. /pin/uslov1
   if (kIsWeb && uri.host == Uri.base.host) return true;
@@ -166,18 +171,22 @@ Future<void> _launchExternal(BuildContext context, Uri uri) async {
 /// course opens with "Přehled" highlighted and "Zpět na všechny kurzy" lands
 /// there too (BR-48B7DY). Off by default so a `/pin` link tapped inside a news
 /// article still returns to Novinky.
-Future<void> openCourseByCode(
+///
+/// Returns the enroll outcome — right away when it failed (after the failure
+/// has been shown), once the course page is closed when it succeeded. The
+/// notification deep-link resolver uses it to fall back to the dashboard.
+Future<EnrollOutcome> openCourseByCode(
   BuildContext context,
   WidgetRef ref,
   String code, {
   bool selectCoursesTab = false,
 }) async {
   final outcome = await enrollCourseByCode(ref, code);
-  if (!context.mounted) return;
+  if (!context.mounted) return outcome;
 
   if (!outcome.isSuccess) {
     await showEnrollFailure(context, ref, outcome);
-    return;
+    return outcome;
   }
 
   // After the failure paths: a code that never resolved must not move the tab.
@@ -194,6 +203,7 @@ Future<void> openCourseByCode(
       ),
     ),
   );
+  return outcome;
 }
 
 /// Render a failed enroll attempt.

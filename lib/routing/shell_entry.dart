@@ -7,7 +7,8 @@ import 'root_navigator.dart';
 import 'tab_routes.dart';
 
 /// The one widget behind every route that hosts the signed-in app: `/`, the
-/// `/course|/pin|/join` deep links, and the tab routes in [mainTabPaths].
+/// `/course|/pin|/join` deep links, the tab routes in [mainTabPaths], and the
+/// pages in [shellPagePaths].
 ///
 /// One widget for all of them — paired with the one shared page key in
 /// `buildAppRouter` — is what makes the browser's back button usable.
@@ -37,6 +38,14 @@ class ShellEntry extends ConsumerStatefulWidget {
   /// never sees it, since joining a class needs an account, not a PIN.
   final String? classroomJoinCode;
 
+  /// The page a `/tools` or `/profile` route opens over the shell
+  /// (BR-N6B622). Parked in [pendingShellIntentProvider] — the slot a pushed
+  /// page's sidebar already uses — because `MainScreen` is what builds those
+  /// pages, and it may not exist yet: logged out, the login screen comes first
+  /// and the page follows once the user is in. No [tabIndex] alongside it; the
+  /// page opens over whichever tab is showing.
+  final ShellIntent? shellIntent;
+
   /// The signed-in app. Only ever overridden by tests: [AuthWrapper] wraps
   /// every state in `InactivityWatcher`, which starts real periodic timers that
   /// `flutter_test` refuses to end a test with — the same reason
@@ -51,6 +60,7 @@ class ShellEntry extends ConsumerStatefulWidget {
     this.deepLinkCode,
     this.chatMentorSlug,
     this.classroomJoinCode,
+    this.shellIntent,
     this.child = const AuthWrapper(),
   });
 
@@ -74,7 +84,8 @@ class _ShellEntryState extends ConsumerState<ShellEntry> {
     if (oldWidget.tabIndex != widget.tabIndex ||
         oldWidget.deepLinkCode != widget.deepLinkCode ||
         oldWidget.chatMentorSlug != widget.chatMentorSlug ||
-        oldWidget.classroomJoinCode != widget.classroomJoinCode) {
+        oldWidget.classroomJoinCode != widget.classroomJoinCode ||
+        oldWidget.shellIntent != widget.shellIntent) {
       _applyRoute();
     }
   }
@@ -105,14 +116,22 @@ class _ShellEntryState extends ConsumerState<ShellEntry> {
       }
 
       final tab = widget.tabIndex;
-      if (tab == null) return;
+      final shellIntent = widget.shellIntent;
+      if (tab == null && shellIntent == null) return;
 
       // Detail pages (course, lesson, profile, Doplňky) are imperative pushes
       // the router knows nothing about. A back/forward that only swapped the
       // URL would leave one of them on screen while the section underneath
       // changed — the URL would move and the app would not. Close them first.
+      // That goes for a page route too: Doplňky replaces the profile rather
+      // than stacking on it, the same as from a pushed page's sidebar.
       Navigator.maybeOf(context)?.popUntil((route) => route.isFirst);
-      ref.read(mainTabIndexProvider.notifier).state = tab;
+      if (tab != null) {
+        ref.read(mainTabIndexProvider.notifier).state = tab;
+      }
+      if (shellIntent != null) {
+        ref.read(pendingShellIntentProvider.notifier).state = shellIntent;
+      }
     });
   }
 

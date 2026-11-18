@@ -516,6 +516,7 @@ class _KurzyPageState extends ConsumerState<KurzyPage> {
       badge: view.badge,
       lessonCount: view.lessonCount,
       durationHours: view.durationHours,
+      durationMinutes: view.durationMinutes,
       currentProgress: view.currentProgress,
       totalProgress: view.totalProgress,
       status: view.status,
@@ -553,7 +554,7 @@ class _KurzyPageState extends ConsumerState<KurzyPage> {
       headerColor: colors[position % colors.length],
       title: view.title,
       meta: '${AppStrings.lessonsCount(view.lessonCount)} · '
-          '${AppStrings.durationHours(view.durationHours)}',
+          '${view.durationLabel}',
       pills: [
         if (userCourse.hasUpdate)
           CourseCardPill(

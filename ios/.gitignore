@@ -32,3 +32,8 @@ Runner/GeneratedPluginRegistrant.*
 !default.mode2v3
 !default.pbxuser
 !default.perspectivev3
+
+# fastlane (ios/fastlane/Fastfile, run by the App store build workflow)
+fastlane/report.xml
+fastlane/metadata/
+fastlane/screenshots/

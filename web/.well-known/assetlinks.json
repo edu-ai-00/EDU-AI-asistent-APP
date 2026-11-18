@@ -1,0 +1,13 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.eduai.eduaiapp",
+      "sha256_cert_fingerprints": [
+        "4E:A1:B1:D9:72:8C:A9:AF:8F:CF:2E:58:72:AF:00:BD:B8:6E:00:5B:02:BB:00:1C:EF:25:CE:28:90:45:6A:3C",
+        "5E:1F:7D:B5:61:6F:4D:ED:FE:C0:D1:FC:AC:1A:DE:0E:07:E8:10:D6:D8:DF:5B:5F:BF:C0:4D:14:30:4D:3F:44"
+      ]
+    }
+  }
+]

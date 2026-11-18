@@ -417,5 +417,42 @@ void main() {
       expect(find.text(AppStrings.engineCheck), findsNothing);
       expect(find.text(solution), findsOneWidget);
     });
+
+    GestureDetector checkButton(WidgetTester tester) =>
+        tester.widget<GestureDetector>(find
+            .ancestor(
+              of: find.text(AppStrings.engineCheck),
+              matching: find.byType(GestureDetector),
+            )
+            .first);
+
+    testWidgets('a rewritten answer can be checked', (tester) async {
+      await pumpEngine(tester, attemptCount: 1);
+      expect(checkButton(tester).onTap, isNull,
+          reason: 'nothing new to check until the answer changes');
+
+      await tester.enterText(find.byType(TextField), 'nova odpoved');
+      await tester.pump();
+
+      expect(checkButton(tester).onTap, isNotNull);
+    });
+
+    testWidgets('also when the old answer was deleted first (BR-557HBK)',
+        (tester) async {
+      // Deleting the old answer is a change too: it reopens the attempt while
+      // the field is momentarily empty. The block used to stay on the graded
+      // screen then, and every keystroke after it found the attempt already
+      // reopened — so the button never came back and the lesson stopped.
+      await pumpEngine(tester, attemptCount: 1);
+
+      await tester.enterText(find.byType(TextField), '');
+      await tester.pump();
+      await tester.enterText(find.byType(TextField), 'nova odpoved');
+      await tester.pump();
+
+      expect(checkButton(tester).onTap, isNotNull);
+      expect(find.text(feedback.improvements), findsOneWidget,
+          reason: 'BR-V9TQA7: the feedback stays while the answer is rewritten');
+    });
   });
 }

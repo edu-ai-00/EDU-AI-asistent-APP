@@ -17,10 +17,11 @@ import '../core/utils/image_url.dart';
 /// Loads through [LessonImageCache], so a picture the device has kept still
 /// shows offline (BR-BX9AA4), and one that failed tries again as soon as the
 /// device is back online instead of waiting for something else to rebuild it.
-/// Raster and SVG sources are both handled.
+/// Raster and SVG sources are both handled. On web the cache keeps pictures in
+/// the browser's Cache Storage (BR-7XZXZD).
 ///
-/// On web there is no cache: the picture loads from [resolveImageUrl] exactly
-/// as `Image.network` / `SvgPicture.network` did before.
+/// Where there is no cache at all the picture loads from [resolveImageUrl]
+/// exactly as `Image.network` / `SvgPicture.network` did before.
 class LessonImage extends StatefulWidget {
   /// The picture's address as it appears in the course content.
   final String url;
@@ -229,36 +230,45 @@ class LessonSvgLoader extends SvgLoader<Uint8List> {
 /// `Image.network` whose error state is an empty box — offline, pictures in
 /// lesson text simply vanished (BR-BX9AA4).
 ///
-/// Null on web, where markdown keeps loading pictures straight from their
-/// URL — [LessonImage] there would send them through the rate-limited API
-/// image proxy instead.
+/// Null where there is no [LessonImageCache], and markdown keeps loading
+/// pictures straight from their URL.
 MarkdownSizedImageBuilder? lessonMarkdownImageBuilder() {
   if (!LessonImageCache.instance.isSupported) return null;
   return (config) {
     final uri = config.uri;
     if (uri.scheme == 'http' || uri.scheme == 'https') {
-      return LessonImage(
+      return _centredInText(LessonImage(
         url: uri.toString(),
         width: config.width,
         height: config.height,
-      );
+      ));
     }
     final data = uri.data;
     if (data != null) {
-      return Image.memory(
+      return _centredInText(Image.memory(
         data.contentAsBytes(),
         width: config.width,
         height: config.height,
         errorBuilder: (_, _, _) => const SizedBox.shrink(),
-      );
+      ));
     }
     return const SizedBox.shrink();
   };
 }
 
+/// A picture written into lesson text sits on a line of its own, centred like
+/// the step's own picture (BR-TFCS5D) — before, it hugged the left edge, and
+/// markdown even put it next to the text of the line above.
+///
+/// In markdown the picture is one child of the paragraph's `Wrap`, in HTML an
+/// inline span; either way it is offered the full width of the line, and
+/// [Align] takes all of it, so nothing else fits beside the picture. [Align]
+/// only loosens the constraints: the picture still stops at its own size.
+Widget _centredInText(Widget picture) => Align(child: picture);
+
 /// flutter_html extensions that draw `<img src="https://…">` in lesson HTML
-/// through [LessonImage]. Empty on web, where the HTML's image URLs are
-/// already rewritten to the proxy by `resolveHtmlImageUrls`.
+/// through [LessonImage]. Empty where there is no [LessonImageCache]; on web
+/// `resolveHtmlImageUrls` then rewrites the HTML's image URLs to the proxy.
 List<HtmlExtension> lessonHtmlImageExtensions() {
   if (!LessonImageCache.instance.isSupported) return const [];
   return [
@@ -268,11 +278,11 @@ List<HtmlExtension> lessonHtmlImageExtensions() {
       builder: (context) {
         final src = context.attributes['src'];
         if (src == null || src.isEmpty) return const SizedBox.shrink();
-        return LessonImage(
+        return _centredInText(LessonImage(
           url: src,
           width: double.tryParse(context.attributes['width'] ?? ''),
           height: double.tryParse(context.attributes['height'] ?? ''),
-        );
+        ));
       },
     ),
   ];

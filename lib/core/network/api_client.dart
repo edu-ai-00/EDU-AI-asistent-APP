@@ -1,5 +1,6 @@
 import 'package:dio/dio.dart';
 
+import '../monitoring/sentry_setup.dart';
 import '../services/auth_token_storage.dart';
 import '../services/session_meta.dart';
 import 'api_endpoints.dart';
@@ -55,6 +56,7 @@ class ApiClient implements OAuthApiPort {
     );
 
     _dio.interceptors.add(LocaleInterceptor());
+    _dio.interceptors.add(DeviceInterceptor());
 
     // Add interceptors in order. Token rotation must come before AuthInterceptor
     // so the rotated token is attached to the in-flight request.
@@ -75,6 +77,9 @@ class ApiClient implements OAuthApiPort {
     if (enableLogging) {
       _dio.interceptors.add(LoggingInterceptor());
     }
+
+    // Last, as sentry_dio requires.
+    instrumentApiDio(_dio);
   }
 
   /// Session metadata accessor for callers that need to read shared_device

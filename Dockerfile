@@ -11,13 +11,38 @@ ARG API_URL=https://app-api.edu-ai.eu
 ARG GOOGLE_WEB_CLIENT_ID=
 ARG MICROSOFT_CLIENT_ID=
 ARG MICROSOFT_TENANT_ID=common
+# Sentry (lib/core/monitoring/sentry_setup.dart). Railway passes the commit it
+# builds; it names the release, eduai@<pubspec version>+<commit>, so Sentry
+# applies this deploy's source maps to this deploy's errors. Without it the
+# app keeps the SDK's own eduai@<version>+<build>.
+ARG RAILWAY_GIT_COMMIT_SHA=
+# An organization auth token (Railway service variable). Set, the build also
+# writes source maps, uploads them and deletes them again, so they are never
+# served; unset, the build is the same as without Sentry. A failed upload
+# never fails the deploy.
+ARG SENTRY_AUTH_TOKEN=
 
 RUN flutter pub get
-RUN flutter build web --release \
-    --dart-define=API_URL=${API_URL} \
-    --dart-define=GOOGLE_WEB_CLIENT_ID=${GOOGLE_WEB_CLIENT_ID} \
-    --dart-define=MICROSOFT_CLIENT_ID=${MICROSOFT_CLIENT_ID} \
-    --dart-define=MICROSOFT_TENANT_ID=${MICROSOFT_TENANT_ID}
+RUN set -e; \
+    release=; \
+    if [ -n "$RAILWAY_GIT_COMMIT_SHA" ]; then \
+      version=$(sed -n 's/^version: *\([^+]*\).*/\1/p' pubspec.yaml); \
+      release="eduai@${version}+$(printf %s "$RAILWAY_GIT_COMMIT_SHA" | cut -c1-12)"; \
+    fi; \
+    source_maps=; \
+    if [ -n "$SENTRY_AUTH_TOKEN" ]; then source_maps=--source-maps; fi; \
+    flutter build web --release $source_maps \
+      --dart-define=API_URL=${API_URL} \
+      --dart-define=GOOGLE_WEB_CLIENT_ID=${GOOGLE_WEB_CLIENT_ID} \
+      --dart-define=MICROSOFT_CLIENT_ID=${MICROSOFT_CLIENT_ID} \
+      --dart-define=MICROSOFT_TENANT_ID=${MICROSOFT_TENANT_ID} \
+      --dart-define=SENTRY_RELEASE=${release}; \
+    if [ -n "$SENTRY_AUTH_TOKEN" ]; then \
+      SENTRY_RELEASE="$release" dart run sentry_dart_plugin \
+        || echo "Sentry source map upload failed; deploying without it" >&2; \
+      find build/web -name '*.map' -delete; \
+      find build/web -name '*.js' -exec sed -i '/^\/\/# sourceMappingURL=/d' {} +; \
+    fi
 
 # Cache-busting: append build timestamp to JS URLs so CDN caches are bypassed.
 # The brand icons get the same stamp: they were served "immutable" for a year

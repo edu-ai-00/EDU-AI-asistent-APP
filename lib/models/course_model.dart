@@ -424,6 +424,15 @@ class Lesson {
   final int xpReward;
   final List<LessonBlock> blocks;
 
+  /// The student has done work in this lesson: finished a block, moved past
+  /// the first one, or answered something. Opening it and leaving is not
+  /// enough — the lesson page saves an entry on every exit.
+  ///
+  /// In a course with every lesson open, all unfinished lessons are
+  /// [LessonStatus.inProgress], so this is what tells the one worked in from
+  /// the untouched ones (BR-XAWEND).
+  final bool isStarted;
+
   const Lesson({
     required this.id,
     required this.title,
@@ -434,6 +443,7 @@ class Lesson {
     required this.durationMinutes,
     this.xpReward = 15,
     this.blocks = const [],
+    this.isStarted = false,
   });
 
   int get totalBlocks => blocks.length;
@@ -548,6 +558,17 @@ class Course {
   }) : _rawData = rawData;
 
   double get progress => lessonCount > 0 ? completedLessons / lessonCount : 0.0;
+
+  /// Whether [lesson] is where the student is in this course — the one the
+  /// course page badges and resumes.
+  ///
+  /// In a sequential course that is the unlocked, unfinished lesson. Every
+  /// unfinished lesson of an open-all course is inProgress, so there it is the
+  /// unfinished lessons the student worked in; going by the status alone showed
+  /// nothing of where they had left off (BR-XAWEND).
+  bool isCurrentLesson(Lesson lesson) =>
+      lesson.status == LessonStatus.inProgress &&
+      (!openAllLessons || lesson.isStarted);
 
   /// The server-side course code (`course_id` in the course JSON), e.g.
   /// "A34-Funkce_c1_v3". [id] is whatever the caller built the course with —
@@ -713,6 +734,100 @@ class Course {
     final quizAnswers = progressData['quiz_answers'] as Map<String, dynamic>?;
     if (quizAnswers != null) completed.addAll(quizAnswers.keys);
     return completed;
+  }
+
+  /// Blocks the student has finished, for the course progress on the Kurzy
+  /// card and the course page — out of every block the lessons hold.
+  ///
+  /// Only the course as it is now counts, each block in the lesson that holds
+  /// it. Progress keeps the record of a deleted or renamed lesson for good,
+  /// and a block moved to another lesson stays done in its old lesson's
+  /// record; summing every record read "140/129" (BR-PTH76K). Each lesson
+  /// block counts at most once, so the result never exceeds the total.
+  ///
+  /// Lesson blocks only. A quiz-only course has no lesson progress, so its
+  /// answered questions stand in. Any other course's Kvíz is not lesson work:
+  /// counting it showed "10/31" for a student who had only run the Kvíz, and
+  /// the first lesson block they finished dropped it to "1/31" (BR-PW3N33).
+  static int completedBlockCount(
+    Map<String, dynamic> courseData,
+    Map<String, dynamic> progressData,
+  ) {
+    final lessonsProgress = progressData['lessons'] as Map<String, dynamic>?;
+    final lessons = courseData['lessons'] as List<dynamic>? ?? const [];
+    final courseBlockIds = <String>{};
+    var count = 0;
+    for (var i = 0; i < lessons.length; i++) {
+      final lesson = lessons[i] as Map<String, dynamic>;
+      // Keyed by Lesson.id, which is what LessonDetailPage saves under.
+      final lessonId = lesson['lesson_id'] as String? ?? 'lesson_$i';
+      final lessonProgress = lessonsProgress?[lessonId] as Map<String, dynamic>?;
+      final done = (lessonProgress?['completed_blocks'] as List<dynamic>?)
+              ?.toSet() ??
+          const <dynamic>{};
+      for (final binding in lesson['blocks'] as List<dynamic>? ?? const []) {
+        final blockId = binding is Map ? binding['block_id'] : null;
+        if (blockId is! String) continue;
+        courseBlockIds.add(blockId);
+        if (done.contains(blockId)) count++;
+      }
+    }
+    if (count > 0 || courseData['only_quiz'] != true) return count;
+
+    final quizAnswers = progressData['quiz_answers'] as Map<String, dynamic>?;
+    return quizAnswers?.entries
+            .where((a) =>
+                courseBlockIds.contains(a.key) &&
+                a.value is Map &&
+                a.value['is_answered'] == true)
+            .length ??
+        0;
+  }
+
+  /// Blocks finished out of the blocks each lesson holds, in course order —
+  /// [completedBlockCount] split per lesson, under the same rules: a block
+  /// counts only in the lesson that holds it now, so `done` never exceeds
+  /// `total`.
+  ///
+  /// Read from the course JSON because [Lesson.blocks] is empty until the
+  /// lesson opens: the dashboard counted those and read every lesson as
+  /// 0 of 0, i.e. finished (BR-W6V77D).
+  static List<({int done, int total})> lessonBlockProgress(
+    Map<String, dynamic> courseData,
+    Map<String, dynamic> progressData,
+  ) {
+    final lessonsProgress = progressData['lessons'] as Map<String, dynamic>?;
+    final lessons = courseData['lessons'] as List<dynamic>? ?? const [];
+    return [
+      for (var i = 0; i < lessons.length; i++)
+        _lessonBlockProgress(
+          lessons[i] as Map<String, dynamic>,
+          i,
+          lessonsProgress,
+        ),
+    ];
+  }
+
+  static ({int done, int total}) _lessonBlockProgress(
+    Map<String, dynamic> lesson,
+    int index,
+    Map<String, dynamic>? lessonsProgress,
+  ) {
+    // Keyed by Lesson.id, which is what LessonDetailPage saves under.
+    final lessonId = lesson['lesson_id'] as String? ?? 'lesson_$index';
+    final lessonProgress = lessonsProgress?[lessonId] as Map<String, dynamic>?;
+    final finished =
+        (lessonProgress?['completed_blocks'] as List<dynamic>?)?.toSet() ??
+            const <dynamic>{};
+    var done = 0;
+    var total = 0;
+    for (final binding in lesson['blocks'] as List<dynamic>? ?? const []) {
+      final blockId = binding is Map ? binding['block_id'] : null;
+      if (blockId is! String) continue;
+      total++;
+      if (finished.contains(blockId)) done++;
+    }
+    return (done: done, total: total);
   }
 
   /// Compute total course duration in minutes from raw course JSON,
@@ -984,6 +1099,19 @@ class Course {
     return completedLessons > 0 && completedLessons < lessonCount;
   }
 
+  /// Whether a lesson's progress entry shows work done — see
+  /// [Lesson.isStarted].
+  static bool lessonHasWork(Map<String, dynamic>? lessonProgress) {
+    if (lessonProgress == null) return false;
+    final completed = lessonProgress['completed_blocks'];
+    final answers = lessonProgress['block_answers'];
+    final index = lessonProgress['current_block_index'];
+    return lessonProgress['is_completed'] == true ||
+        (completed is List && completed.isNotEmpty) ||
+        (answers is Map && answers.isNotEmpty) ||
+        (index is num && index > 0);
+  }
+
   /// Create a Course from downloaded JSON data and user progress.
   factory Course.fromJsonData({
     required String id,
@@ -1037,7 +1165,8 @@ class Course {
         // fallbacks below must NOT run here — completedLessons is a *count* of
         // completed lessons, not an index, so a student who jumps straight to
         // lesson 5 and finishes it (count == 1) would light up lesson 1 as
-        // completed. Everything not completed is inProgress, i.e. unlocked.
+        // completed. Everything not completed is inProgress, i.e. unlocked;
+        // Lesson.isStarted marks the ones the student worked in.
         final lp = lessonsProgress?[lessonId] as Map<String, dynamic>?;
         status = lp?['is_completed'] == true
             ? LessonStatus.completed
@@ -1128,6 +1257,8 @@ class Course {
         durationMinutes: durationMinutes,
         xpReward: xpReward,
         blocks: const [], // Blocks will be loaded separately when lesson is opened
+        isStarted: lessonHasWork(
+            lessonsProgress?[lessonId] as Map<String, dynamic>?),
       ));
     }
 

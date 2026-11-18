@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.0.25+35
+version: 1.1.1+35
 
 environment:
   sdk: ^3.10.0
@@ -42,6 +42,8 @@ dependencies:
   sqlite3_flutter_libs: ^0.5.18
   path_provider: ^2.1.2
   path: ^1.8.3
+  # Browser fetch + Cache Storage for lesson pictures on web (BR-7XZXZD).
+  web: ^1.1.1
 
   # HTTP & Connectivity
   dio: ^5.4.0
@@ -92,6 +94,16 @@ dependencies:
   url_launcher: ^6.3.1
   flutter_web_plugins:
     sdk: flutter
+  firebase_core: ^4.15.0
+  firebase_messaging: ^16.7.0
+  flutter_timezone: ^5.1.1
+
+  # Crash / error reporting. Held on 9.x: 10.0 drops CocoaPods (this project
+  # still builds iOS plugins through CocoaPods, see `flutter: config:` below)
+  # and raises Android minSdk to 26 (Flutter's default here is 24).
+  # sentry_dio must stay on the exact same version as sentry_flutter.
+  sentry_flutter: ^9.30.1
+  sentry_dio: ^9.30.1
 
 dev_dependencies:
   flutter_test:
@@ -110,6 +122,10 @@ dev_dependencies:
 
   # Expands branding/app_icon_1024.png into every launcher icon size.
   flutter_launcher_icons: ^0.14.4
+
+  # Uploads web source maps / native debug files to Sentry after a release
+  # build (`dart run sentry_dart_plugin`, configured in `sentry:` below).
+  sentry_dart_plugin: ^3.4.0
 
 # Launcher icons. Regenerate after `design/logo/generate.py` with:
 #   dart run flutter_launcher_icons
@@ -135,6 +151,25 @@ flutter_launcher_icons:
     generate: true
   windows:
     generate: true
+
+# sentry_dart_plugin (`dart run sentry_dart_plugin`, after a release build):
+# uploads web source maps (`flutter build web --source-maps`) and the Android
+# native debug files, so Sentry can show readable frames. Run by the web
+# Dockerfile and the Android store job, each only when SENTRY_AUTH_TOKEN (an
+# organization auth token, which also tells sentry-cli the EU region) is set.
+# The release comes from SENTRY_RELEASE there and must equal the app's own —
+# see lib/core/monitoring/sentry_setup.dart.
+sentry:
+  org: no-big-deals
+  project: eduai-app
+  upload_debug_symbols: true
+  upload_source_maps: true
+  # Linking commits needs the git history (the Docker build has no .git) and
+  # a repository integration in Sentry.
+  commits: false
+  # A fixed place, so the Android job can reuse the same sentry-cli for the
+  # R8 mapping.
+  bin_dir: .dart_tool/sentry-cli
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

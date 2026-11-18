@@ -5,6 +5,7 @@ import 'package:dio/dio.dart';
 import '../services/auth_token_storage.dart';
 import '../services/session_meta.dart';
 import '../strings/locale_manager.dart';
+import '../util/device_kind.dart';
 import 'api_endpoints.dart';
 
 /// Keys for storing auth data.
@@ -25,6 +26,28 @@ class LocaleInterceptor extends Interceptor {
   @override
   void onRequest(RequestOptions options, RequestInterceptorHandler handler) {
     options.headers['Accept-Language'] = LocaleManager.current.code;
+    handler.next(options);
+  }
+}
+
+/// Tags every request with the device the app runs on, so the server can
+/// record the one an account first signed in from (BR-CMA88Y) — the admin
+/// shows it even for a pupil who registered and did nothing else.
+///
+/// Read per request like the language: a browser window can be resized from
+/// phone to desktop width while the `Dio` instance lives on.
+class DeviceInterceptor extends Interceptor {
+  DeviceInterceptor({DeviceKind Function()? device})
+      : _device = device ?? DeviceKind.current;
+
+  final DeviceKind Function() _device;
+
+  @override
+  void onRequest(RequestOptions options, RequestInterceptorHandler handler) {
+    final device = _device();
+    options.headers['X-Device-Platform'] = device.platform;
+    final type = device.type;
+    if (type != null) options.headers['X-Device-Type'] = type;
     handler.next(options);
   }
 }

@@ -2,8 +2,10 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_web_plugins/url_strategy.dart';
+import 'package:sentry_flutter/sentry_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'app.dart';
+import 'core/monitoring/sentry_setup.dart';
 import 'core/providers/core_providers.dart';
 import 'core/services/auth_token_storage.dart';
 import 'core/strings/locale_manager.dart';
@@ -57,6 +59,11 @@ Future<void> _restoreSavedTheme() async {
 }
 
 void main() async {
+  // Sentry first, so that a failure anywhere in the bootstrap is reported.
+  await runWithSentry(_bootstrap);
+}
+
+Future<void> _bootstrap() async {
   // Ensure Flutter bindings are initialized before using plugins.
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -83,12 +90,16 @@ void main() async {
   await LocaleManager.restore();
 
   runApp(
-    ProviderScope(
-      overrides: [
-        sharedPreferencesProvider.overrideWithValue(sharedPreferences),
-        authTokenStorageProvider.overrideWithValue(authTokenStorage),
-      ],
-      child: const MyApp(),
+    // Outermost, as Sentry requires: it records taps as breadcrumbs and, on
+    // iOS/Android, the frames Session Replay is cut from.
+    SentryWidget(
+      child: ProviderScope(
+        overrides: [
+          sharedPreferencesProvider.overrideWithValue(sharedPreferences),
+          authTokenStorageProvider.overrideWithValue(authTokenStorage),
+        ],
+        child: const MyApp(),
+      ),
     ),
   );
 }

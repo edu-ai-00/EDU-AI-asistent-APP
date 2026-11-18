@@ -6,6 +6,10 @@
 //
 // The row now drops below the icon and takes the hero's full width as soon as
 // the text column is too narrow for it.
+//
+// BR-CVJURC — "Uložit kurz" was a placeholder that only showed a "Připravujeme"
+// toast, so it is gone from the hero; the stacking widths stay where BR-BCNXAP
+// put them.
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -15,7 +19,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:eduai/core/database/app_database.dart';
 import 'package:eduai/core/layout/breakpoints.dart';
 import 'package:eduai/core/providers/core_providers.dart';
-import 'package:eduai/core/strings/app_strings.dart';
 import 'package:eduai/main.dart' show routeObserver;
 import 'package:eduai/models/course_model.dart';
 import 'package:eduai/pages/course_detail_page.dart'
@@ -98,7 +101,6 @@ Rect _rectOf(WidgetTester tester, Finder finder) =>
     tester.getRect(finder.first);
 
 void main() {
-  final saveButton = find.text(AppStrings.courseSaveButton);
   final buttons = find.byKey(courseHeroActionButtonsKey);
   final icon = find.text(_courseEmoji);
 
@@ -124,33 +126,34 @@ void main() {
 
       final iconRect = _rectOf(tester, icon);
       final group = _rectOf(tester, buttons);
-      final save = _rectOf(tester, saveButton);
 
       expect(group.left, greaterThan(iconRect.right),
           reason: 'the desktop artboard keeps the row in the text column');
       expect(group.width, closeTo(kHeroActionsMaxWidth, 1));
-      expect(save.center.dy, closeTo(group.center.dy, 8),
-          reason: 'save stays on the same line as the actions');
-      expect(save.left, greaterThan(group.right),
-          reason: 'and to the right of them');
+    });
+
+    testWidgets('carry no save-course placeholder (BR-CVJURC)',
+        (tester) async {
+      await _pumpCourse(tester, 1600);
+
+      expect(find.byIcon(Icons.bookmark_border_rounded), findsNothing,
+          reason: 'saving a whole course is not wired up, so the hero must '
+              'not offer a button for it');
     });
   });
 
-  group('heroActionRowFits', () {
+  group('heroActionsFitBesideIcon', () {
     test('rejects the widths the text column has on a tablet', () {
       // 1024px viewport: 264px sidebar, 32px page padding, 24px card padding,
       // then the 160px icon and its 24px gap.
-      expect(heroActionRowFits(1024 - 264 - 64 - 48 - 160 - 24), isFalse);
-      expect(heroActionRowFits(kHeroActionsMinWidth), isFalse);
+      expect(heroActionsFitBesideIcon(1024 - 264 - 64 - 48 - 160 - 24),
+          isFalse);
+      expect(heroActionsFitBesideIcon(kHeroActionsMinWidth), isFalse);
     });
 
     test('accepts a desktop text column', () {
-      expect(heroActionRowFits(1440 - 264 - 64 - 48 - 160 - 24), isTrue);
-      expect(
-        heroActionRowFits(
-            kHeroActionsMinWidth + kHeroActionsGap + kHeroSaveButtonWidth),
-        isTrue,
-      );
+      expect(heroActionsFitBesideIcon(1440 - 264 - 64 - 48 - 160 - 24), isTrue);
+      expect(heroActionsFitBesideIcon(kHeroActionsBesideIconMinWidth), isTrue);
     });
   });
 }

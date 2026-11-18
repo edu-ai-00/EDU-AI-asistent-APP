@@ -9,8 +9,10 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:eduai/core/media/course_image_urls.dart';
+import 'package:eduai/core/media/lesson_image_backend.dart';
 import 'package:eduai/core/media/lesson_image_backend_io.dart';
 import 'package:eduai/core/media/lesson_image_cache.dart';
+import 'package:eduai/core/utils/image_url.dart';
 
 import 'fake_lesson_image_backend.dart';
 
@@ -90,12 +92,47 @@ void main() {
       expect(backend.fetched, isEmpty);
     });
 
-    test('no backend (web): nothing to do', () async {
+    test('downloads in the background, so web keeps off the API proxy',
+        () async {
+      final backend = FakeLessonImageBackend(server: {a: bytesOf([1])});
+      final cache = LessonImageCache(backend: backend)
+        ..setConnectivityForTesting(isOnline: () async => true);
+
+      await cache.prefetch([a]);
+      await cache.load(b).catchError((_) => bytesOf([]));
+
+      expect(backend.fetchedInBackground, [a]);
+      expect(backend.fetched, [a, b], reason: 'a shown picture is no prefetch');
+    });
+
+    test('no backend: nothing to do', () async {
       final cache = LessonImageCache(useDefaultBackend: false)
         ..setConnectivityForTesting(isOnline: () async => true);
 
       expect(cache.isSupported, isFalse);
       await cache.prefetch([a]);
+    });
+  });
+
+  // BR-7XZXZD — the web build had no backend, so offline a downloaded course
+  // showed broken-image boxes. Its backend downloads from the picture's own
+  // address first and the API proxy second.
+  group('webLessonImageSources', () {
+    test('the picture itself first, then the API image proxy', () {
+      final sources = webLessonImageSources(a);
+
+      expect(sources, hasLength(2));
+      expect(sources.first, a);
+      expect(sources.last, proxyImageUrl(a));
+      expect(sources.last, contains(Uri.encodeComponent(a)));
+    });
+
+    test('a background download leaves the shared proxy alone', () {
+      expect(webLessonImageSources(a, background: true), [a]);
+    });
+
+    test('nothing to proxy for a non-http address', () {
+      expect(webLessonImageSources('assets/x.png'), ['assets/x.png']);
     });
   });
 

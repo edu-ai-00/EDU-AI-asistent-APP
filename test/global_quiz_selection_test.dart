@@ -241,6 +241,140 @@ void main() {
           containsAll(['short0', 'short1', 'short2']));
     });
 
+    test('several chosen domains each reach the quiz (BR-ZQABZN)', () {
+      // N (index 0) holds twenty tasks exactly at the student's level, the
+      // four other domains tasks a little off, so the engine's nearest-20
+      // window over the whole pool is nothing but N. An undivided draw hands
+      // the student a quiz from one domain although every box is checked.
+      final pool = [
+        for (var i = 0; i < 20; i++) _block('n$i', comps: const {0: 6.0}),
+        for (var i = 0; i < 20; i++) _block('m$i', comps: const {17: 6.8}),
+        for (var i = 0; i < 20; i++) _block('g$i', comps: const {22: 6.8}),
+        for (var i = 0; i < 20; i++) _block('s$i', comps: const {25: 6.8}),
+        for (var i = 0; i < 20; i++) _block('a$i', comps: const {29: 6.8}),
+      ];
+      final student =
+          _student(const {0: 6.0, 17: 6.0, 22: 6.0, 25: 6.0, 29: 6.0});
+
+      for (var seed = 0; seed < 5; seed++) {
+        final picked = selectGlobalQuizBlocks(
+          pool: pool,
+          studentElo: student,
+          domainCodes: const {'N', 'M', 'G', 'S', 'A'},
+          random: Random(seed),
+        );
+        expect(picked, hasLength(globalQuizLength));
+        expect(representedDomains(picked), {'N', 'M', 'G', 'S', 'A'},
+            reason: 'seed $seed drew a single-domain quiz');
+      }
+    });
+
+    test('every chosen domain gets its share of the ten slots (BR-ZQABZN)',
+        () {
+      // Five domains, every task an exact match: nothing but the share
+      // decides, so each domain must contribute exactly two of the ten.
+      final pool = [
+        for (final d in const {'n': 0, 'm': 17, 'g': 22, 's': 25, 'a': 29}
+            .entries)
+          for (var i = 0; i < 10; i++)
+            _block('${d.key}$i', comps: {d.value: 6.0}),
+      ];
+      final student =
+          _student(const {0: 6.0, 17: 6.0, 22: 6.0, 25: 6.0, 29: 6.0});
+
+      for (var seed = 0; seed < 5; seed++) {
+        final picked = selectGlobalQuizBlocks(
+          pool: pool,
+          studentElo: student,
+          domainCodes: const {'N', 'M', 'G', 'S', 'A'},
+          random: Random(seed),
+        );
+        expect(picked, hasLength(globalQuizLength));
+        for (final prefix in const ['n', 'm', 'g', 's', 'a']) {
+          expect(picked.where((b) => b.blockId.startsWith(prefix)).length, 2,
+              reason: 'seed $seed gave domain $prefix the wrong share');
+        }
+      }
+    });
+
+    test('the ELO band still rules inside a domain share (BR-ZQABZN)', () {
+      // M holds both fitting and far-too-easy tasks. Its two slots must go to
+      // the fitting ones — the share decides how many, never which.
+      final pool = [
+        for (var i = 0; i < 20; i++) _block('n$i', comps: const {0: 6.0}),
+        for (var i = 0; i < 20; i++) _block('mEasy$i', comps: const {17: 1.0}),
+        for (var i = 0; i < 20; i++) _block('mFit$i', comps: const {17: 6.0}),
+      ];
+      final student = _student(const {0: 6.0, 17: 6.0});
+
+      for (var seed = 0; seed < 5; seed++) {
+        final picked = selectGlobalQuizBlocks(
+          pool: pool,
+          studentElo: student,
+          domainCodes: const {'N', 'M'},
+          random: Random(seed),
+        );
+        expect(picked, hasLength(globalQuizLength));
+        expect(picked.any((b) => b.blockId.startsWith('mEasy')), isFalse,
+            reason: 'seed $seed drew a task a band below the student');
+      }
+    });
+
+    test('a domain too thin for its share leaves the slots to the others',
+        () {
+      // M can serve one task of its five; the quiz must still hold ten, with
+      // no block twice, and M must not be dropped for being thin.
+      final pool = [
+        for (var i = 0; i < 20; i++) _block('n$i', comps: const {0: 6.0}),
+        _block('m0', comps: const {17: 6.0}),
+      ];
+      final student = _student(const {0: 6.0, 17: 6.0});
+
+      for (var seed = 0; seed < 5; seed++) {
+        final picked = selectGlobalQuizBlocks(
+          pool: pool,
+          studentElo: student,
+          domainCodes: const {'N', 'M'},
+          random: Random(seed),
+        );
+        expect(picked, hasLength(globalQuizLength));
+        expect(picked.map((b) => b.blockId).toSet(),
+            hasLength(globalQuizLength),
+            reason: 'seed $seed repeated a block');
+        expect(picked.map((b) => b.blockId), contains('m0'),
+            reason: 'seed $seed dropped the thin domain');
+      }
+    });
+
+    test('the leftover slot does not always fall to the same domain', () {
+      // Three domains over ten slots is 4 + 3 + 3; which domain gets the
+      // fourth is drawn, not the registry order.
+      final pool = [
+        for (final d in const {'n': 0, 'm': 17, 'g': 22}.entries)
+          for (var i = 0; i < 10; i++)
+            _block('${d.key}$i', comps: {d.value: 6.0}),
+      ];
+      final student = _student(const {0: 6.0, 17: 6.0, 22: 6.0});
+
+      final favoured = <String>{};
+      for (var seed = 0; seed < 20; seed++) {
+        final picked = selectGlobalQuizBlocks(
+          pool: pool,
+          studentElo: student,
+          domainCodes: const {'N', 'M', 'G'},
+          random: Random(seed),
+        );
+        expect(picked, hasLength(globalQuizLength));
+        for (final prefix in const ['n', 'm', 'g']) {
+          if (picked.where((b) => b.blockId.startsWith(prefix)).length == 4) {
+            favoured.add(prefix);
+          }
+        }
+      }
+      expect(favoured, hasLength(greaterThan(1)),
+          reason: 'the extra slot went to one domain across 20 draws');
+    });
+
     test('unrankable blocks fill up a thin ranked pool', () {
       final pool = [
         for (var i = 0; i < 4; i++) _block('vec$i', comps: const {0: 6.0}),

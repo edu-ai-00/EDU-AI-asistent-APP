@@ -388,7 +388,7 @@ class _AchievementsPageState extends State<AchievementsPage> {
     required bool isEarned,
     required double size,
   }) {
-    return Container(
+    final tile = Container(
       width: size,
       height: size,
       decoration: BoxDecoration(
@@ -405,6 +405,17 @@ class _AchievementsPageState extends State<AchievementsPage> {
           ),
         ),
       ),
+    );
+    if (trophy.title.isEmpty) return tile;
+
+    // The grid is icons only, so the name and what earns the trophy come up
+    // on hover (long press on touch) and for screen readers; earned ones are
+    // also listed by name below the grid (BR-RQAVPY).
+    return Tooltip(
+      message: trophy.description.isEmpty
+          ? trophy.title
+          : '${trophy.title}\n${trophy.description}',
+      child: tile,
     );
   }
 

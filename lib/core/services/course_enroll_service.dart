@@ -131,9 +131,10 @@ Future<EnrollOutcome> enrollCourseByCode(WidgetRef ref, String code) async {
     }
 
     // Step 4.6: Kick off a sync now that the course content is local — it
-    // seeds practice cards for every default_practice block and pushes them
-    // to the server, so the student's practice set is complete immediately
-    // after enrollment instead of waiting for the next periodic sync.
+    // seeds practice cards for the default_practice blocks of lessons already
+    // finished (BR-B5QBBS) and pushes them to the server, so the student's
+    // practice set is complete immediately after enrollment instead of
+    // waiting for the next periodic sync.
     ref.read(syncServiceProvider).sync();
 
     // Step 5: Load full course data for navigation

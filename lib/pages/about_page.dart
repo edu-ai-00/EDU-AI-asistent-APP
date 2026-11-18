@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../core/connectivity/connectivity_service.dart';
+import '../core/monitoring/sentry_user.dart';
 import '../core/network/api_endpoints.dart';
 import '../core/providers/core_providers.dart';
 import '../core/theme/app_theme.dart';
@@ -823,6 +824,8 @@ class _AboutPageState extends ConsumerState<AboutPage> {
     if (confirmed == true) {
       final apiClient = ref.read(apiClientProvider);
       await apiClient.clearAuthToken();
+      // The session is gone without a logout, so LogoutCoordinator never runs.
+      forgetSentryUser();
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

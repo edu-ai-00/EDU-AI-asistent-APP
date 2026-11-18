@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:sentry_flutter/sentry_flutter.dart';
 import '../core/providers/navigation_providers.dart';
 import '../data/repositories/consent_repository.dart';
 import '../main.dart' show routeObserver;
@@ -44,6 +45,18 @@ GoRouter buildAppRouter({
         pageBuilder: (context, state) => NoTransitionPage(
           key: shellPageKey,
           child: ShellEntry(tabIndex: i),
+        ),
+      ),
+    // Doplňky and the profile are pages pushed over the shell, not tabs, but
+    // they get a URL each all the same — linkable, and named in the address
+    // bar while open (BR-N6B622). Same shell route as the tabs, so arriving
+    // here from one of them does not rebuild the app either.
+    for (final entry in shellPagePaths.entries)
+      GoRoute(
+        path: entry.value,
+        pageBuilder: (context, state) => NoTransitionPage(
+          key: shellPageKey,
+          child: ShellEntry(shellIntent: entry.key),
         ),
       ),
     // Deep links: both resolve a course by its join code/PIN (e.g. 676767).
@@ -153,7 +166,8 @@ GoRouter buildAppRouter({
     initialLocation: initialLocation,
     navigatorKey: navigatorKey,
     routes: routes,
-    observers: [routeObserver],
+    // SentryNavigatorObserver: navigation breadcrumbs and screen-load spans.
+    observers: [routeObserver, SentryNavigatorObserver()],
     errorBuilder: (context, state) => Scaffold(
       body: Center(
         child: Padding(

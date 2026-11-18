@@ -1,6 +1,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <!-- Android 13+: asked from the in-app priming card in Novinky, never at
+         first launch. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <application
         android:usesCleartextTraffic="true"
         android:label="Edu"
@@ -27,7 +30,31 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- App Links (BR-PCAKUU): the shareable web links open the
+                 installed app instead of the browser. Only the paths the app
+                 routes itself (see buildAppRouter) — /consent and /auth must
+                 stay in the browser. autoVerify needs web/.well-known/
+                 assetlinks.json to list this app's signing certificate;
+                 without that match Android keeps sending them to the browser.
+                 Prod host only: the store app talks to the prod API, so a
+                 stage link opened in it would resolve against the wrong data. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="https" android:host="app.edu-ai.eu"/>
+                <data android:pathPrefix="/pin/"/>
+                <data android:pathPrefix="/course/"/>
+                <data android:pathPrefix="/join/"/>
+                <data android:pathPrefix="/chat/"/>
+            </intent-filter>
         </activity>
+        <!-- Channel for pushes that do not name one. The server sends
+             android.notification.channel_id = "eduai_default" as well;
+             MainActivity creates the channel. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="eduai_default" />
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

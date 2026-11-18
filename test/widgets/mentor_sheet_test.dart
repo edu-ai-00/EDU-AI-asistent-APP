@@ -28,6 +28,16 @@ ContentBlock _block({String? help}) => ContentBlock(
       atomicHelp: help,
     );
 
+/// BR-3FE9U7 — a block whose author filled in only the second stage: help,
+/// no hint.
+ContentBlock _helpOnlyBlock() => ContentBlock(
+      blockId: 'b3',
+      type: BlockType.display,
+      atomicHelp: _helpOnly,
+    );
+
+const _helpOnly = 'Rovnice mají dvě části, které nevypadají, ale jsou stejné.';
+
 /// BR-JHDNB3 — a step-based block whose second step brings its own hint/help.
 ContentBlock _steppedBlock({String? stepHelp}) => ContentBlock.fromJson({
       'block_id': 'b2',
@@ -386,6 +396,63 @@ void main() {
     expect(find.textContaining('Rozepiš si obě strany rovnice.'),
         findsOneWidget);
     expect(find.text(AppStrings.mentorSheetInputHint), findsNothing);
+  });
+
+  group('BR-3FE9U7 — a step with help but no hint', () {
+    // The "?" used to be gated on the hint alone, so help written without one
+    // never reached the student. There is no first rung to climb, so the sheet
+    // opens at the help text and carries on from there.
+
+    testWidgets('opens at the help text and goes straight to the AI input',
+        (tester) async {
+      var escalated = 0;
+      await tester.pumpWidget(_host(
+        block: _helpOnlyBlock(),
+        onSavePractice: () {},
+        onEscalateToHelp: () => escalated++,
+      ));
+      await _openSheet(tester);
+
+      expect(find.textContaining(_helpOnly), findsOneWidget);
+      // The help was revealed on open, so the caller records that level and
+      // the score penalty matches what the student actually saw.
+      expect(escalated, 1);
+      // Nothing is left for "Nerozumím tomu" to reveal.
+      expect(find.text(AppStrings.lessonFeedbackConfused), findsNothing);
+      expect(find.text(AppStrings.lessonFeedbackPractice), findsNothing);
+      expect(find.text(AppStrings.mentorSheetInputHint), findsOneWidget);
+    });
+
+    testWidgets('allowAi: false stops at the help text', (tester) async {
+      await tester.pumpWidget(_host(block: _helpOnlyBlock(), allowAi: false));
+      await _openSheet(tester);
+
+      expect(find.textContaining(_helpOnly), findsOneWidget);
+      expect(find.text(AppStrings.mentorSheetInputHint), findsNothing);
+    });
+
+    testWidgets('scoped to the step the "?" was tapped on', (tester) async {
+      final block = ContentBlock.fromJson({
+        'block_id': 'b4',
+        'type': 'display',
+        'steps': [
+          {'id': 's1', 'type': 'text', 'order': 1, 'content': 'Úvod'},
+          {
+            'id': 's2',
+            'type': 'text',
+            'order': 2,
+            'content': 'Video',
+            'help': _helpOnly,
+          },
+        ],
+      });
+
+      await tester.pumpWidget(_host(block: block, stepId: 's2'));
+      await _openSheet(tester);
+
+      expect(find.textContaining(_helpOnly), findsOneWidget);
+      expect(find.text(AppStrings.lessonFeedbackConfused), findsNothing);
+    });
   });
 
   group('BR-3PNK46 — the sent question shows up at once', () {

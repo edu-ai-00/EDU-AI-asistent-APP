@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../consent/minor_mode.dart';
+import '../monitoring/sentry_user.dart';
 import '../services/auth_token_storage.dart';
 import '../services/guest_auth_service.dart';
 import '../services/practice_filter_store.dart';
@@ -14,6 +15,7 @@ import '../../data/datasources/local/user_progress_local_datasource.dart';
 import '../../data/datasources/local/user_stats_local_datasource.dart';
 import '../../data/datasources/remote/course_remote_datasource.dart';
 import '../../data/datasources/remote/avatar_remote_datasource.dart';
+import '../../data/datasources/remote/dashboard_banners_remote_datasource.dart';
 import '../../data/datasources/remote/mini_games_remote_datasource.dart';
 import '../../data/datasources/remote/news_remote_datasource.dart';
 import '../../data/datasources/remote/user_stats_remote_datasource.dart';
@@ -25,11 +27,12 @@ import '../../data/repositories/course_repository.dart';
 import '../../data/repositories/elo_repository.dart';
 import '../../data/repositories/gpf_label_repository.dart';
 import '../../data/repositories/avatar_repository.dart';
+import '../../data/repositories/dashboard_banners_repository.dart';
 import '../../data/repositories/mini_games_repository.dart';
 import '../../data/repositories/news_repository.dart';
 import '../../models/avatar_model.dart';
+import '../../models/dashboard_banner.dart';
 import '../../models/mini_game_model.dart';
-import '../../models/news_model.dart';
 import '../../models/skill_display_model.dart';
 import '../elo/elo_failure_reporter.dart';
 import '../elo/skill_display_service.dart';
@@ -45,6 +48,7 @@ import '../network/api_client.dart';
 import '../theme/theme_config.dart';
 import '../sync/sync_queue.dart';
 import '../sync/sync_service.dart';
+import 'notification_providers.dart';
 import 'package:eduai/core/util/silent_log.dart';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -148,6 +152,10 @@ class LogoutCoordinator {
   Future<void> teardown() async {
     if (_running) return;
     _running = true;
+    // Error reports stop naming the departing account straight away, and its
+    // breadcrumbs go with it (client rule 5.9) — first, so a teardown that
+    // stalls cannot hand either to whoever signs in next.
+    forgetSentryUser();
     try {
       final api = _ref.read(apiClientProvider);
       final session = _ref.read(sessionMetaProvider);
@@ -165,6 +173,31 @@ class LogoutCoordinator {
             await sync.forceSync().timeout(const Duration(seconds: 8));
           }
         }
+      } catch (e, st) {
+        silentLog('logout_coordinator', e, st);
+      }
+
+      // 1b. Notifications, while the token still authenticates: send the
+      //     queued feed/push events, then take this device off the account's
+      //     push list — after /api/logout the DELETE could no longer be
+      //     attributed, and the next person here would get this one's pushes.
+      //     (A 401 cannot do this; the server drops the device together with
+      //     the access token instead.)
+      try {
+        if (api.isAuthenticated) {
+          await _ref
+              .read(notificationEventsProvider)
+              .flush()
+              .timeout(const Duration(seconds: 5));
+        }
+      } catch (e, st) {
+        silentLog('logout_coordinator', e, st);
+      }
+      try {
+        await _ref
+            .read(pushControllerProvider)
+            .unregister()
+            .timeout(const Duration(seconds: 5));
       } catch (e, st) {
         silentLog('logout_coordinator', e, st);
       }
@@ -215,6 +248,37 @@ class LogoutCoordinator {
       } catch (e, st) {
         silentLog('logout_coordinator', e, st);
       }
+      // And the news kept for offline (BR-7XZXZD): its read flags are this
+      // account's.
+      try {
+        await NewsRepository.clearCache(_ref.read(sharedPreferencesProvider));
+      } catch (e, st) {
+        silentLog('logout_coordinator', e, st);
+      }
+      // And the dashboard banners (BR-SAWX2U): which ones came back depends
+      // on this account's courses, class and school.
+      try {
+        await DashboardBannersRepository.clearCache(
+          _ref.read(sharedPreferencesProvider),
+        );
+      } catch (e, st) {
+        silentLog('logout_coordinator', e, st);
+      }
+      // The provider holds the loaded list in memory too (it is not
+      // autoDispose), so the cache clear above is not enough — without this the
+      // next account reuses the previous one's banners (BR-SAWX2U).
+      try {
+        _ref.invalidate(dashboardBannersProvider);
+      } catch (e, st) {
+        silentLog('logout_coordinator', e, st);
+      }
+      // Likewise the notification feed, its unsent events, the push priming
+      // answer and the badge — all of them this account's.
+      try {
+        await clearNotificationLocalState(_ref);
+      } catch (e, st) {
+        silentLog('logout_coordinator', e, st);
+      }
 
       // 4. Wipe all local data so the next user sees nothing of the previous one.
       try {
@@ -240,6 +304,11 @@ class LogoutCoordinator {
         silentLog('logout_coordinator', e, st);
       }
     } finally {
+      // The steps above flushed, revoked and wiped on the departing account's
+      // behalf; their breadcrumbs (request URLs, silent failures) are its too.
+      // The user is not cleared again here — after a stall past the
+      // navigation deadline, it may already be the next account's.
+      clearSentryBreadcrumbs();
       _running = false;
     }
   }
@@ -669,6 +738,29 @@ final earnedAchievementsProvider = StreamProvider<List<String>>((ref) {
   );
 });
 
+/// IDs of the achievements the active user has earned, read straight from the
+/// database for the Úspěchy page, which takes them as a snapshot when pushed.
+///
+/// Not `ref.read(earnedAchievementsProvider)`: nothing in the app listens to
+/// that provider, and Riverpod builds an unlistened provider only when it is
+/// read, dropping its database subscription whenever the active-user row is
+/// written. A plain `.valueOrNull` read found it still loading — an empty set
+/// on every first visit, a stale one after that — and the page drew every
+/// trophy as not earned while the Trofeje card above the grid counted them
+/// (BR-RQAVPY). Awaiting its `.future` is no cure either: invalidated mid-read,
+/// an unlistened provider is never rebuilt, so the future never completes.
+Future<Set<String>> readEarnedAchievementIds(AppDatabase db) async {
+  try {
+    final user = await db.getActiveUser();
+    if (user == null) return {};
+    final earned = await db.getEarnedAchievements(user.id);
+    return {for (final a in earned) a.achievementId};
+  } catch (e, st) {
+    silentLog('earned_achievement_ids', e, st);
+    return {};
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // ELO / Adaptive Learning Providers
 // ═══════════════════════════════════════════════════════════════════════════
@@ -825,7 +917,12 @@ final chatMessagesStreamProvider =
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// News (Novinky) Providers — online-only, no local storage
+// News (Novinky) Providers — network first, last list kept in prefs
+//
+// The Novinky list itself is the notification feed now (news + notifications,
+// `feedControllerProvider` in notification_providers.dart). The news
+// endpoints stay for the article detail and its read mark, and as the
+// fallback for a server without `/api/feed`.
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Provider for the news remote data source.
@@ -835,42 +932,51 @@ final newsRemoteDataSourceProvider = Provider<NewsRemoteDataSource>((ref) {
 
 /// Provider for the news repository.
 final newsRepositoryProvider = Provider<NewsRepository>((ref) {
-  return NewsRepository(ref.watch(newsRemoteDataSourceProvider));
-});
-
-/// Future provider for the news list. As a side-effect it updates the
-/// unread-count provider so the bottom-nav badge stays in sync.
-final newsListProvider = FutureProvider<List<NewsItem>>((ref) async {
-  final repository = ref.watch(newsRepositoryProvider);
-  final result = await repository.fetchList();
-  // Update unread count after the current build completes to avoid mutating
-  // another provider during this provider's build.
-  Future.microtask(
-    () => ref.read(unreadNewsCountProvider.notifier).set(result.unreadCount),
+  return NewsRepository(
+    ref.watch(newsRemoteDataSourceProvider),
+    ref.watch(sharedPreferencesProvider),
   );
-  return result.items;
 });
 
-/// Notifier holding the unread news count for the bottom-nav badge.
+/// Notifier holding the Novinky badge: unread news *and* notifications.
 class UnreadNewsCount extends Notifier<int> {
   @override
   int build() => 0;
 
-  /// Set the count directly (e.g. from a list/read response).
+  /// Set the count directly (e.g. from a feed/read response).
   void set(int count) => state = count;
 
-  /// Fetch the news list and update the count from the server.
+  /// Ask the server for the count (`GET /api/notifications/unread-count`).
+  ///
+  /// A server that predates the notification system answers 404; the count
+  /// then comes from the news list, as it always did, so this build keeps
+  /// working against an older API. Any other failure leaves the last known
+  /// count on the badge — or, offline with nothing known yet (a cold start),
+  /// the count from the feed kept for offline.
   Future<void> refresh() async {
     try {
-      final result = await ref.read(newsRepositoryProvider).fetchList();
-      state = result.unreadCount;
+      final result =
+          await ref.read(notificationsRemoteDataSourceProvider).getUnreadCount();
+      if (result.isSuccess) {
+        state = result.data!;
+        return;
+      }
+      if (result.statusCode == null && state == 0) {
+        final kept = ref.read(feedRepositoryProvider).readCache();
+        if (kept != null) state = kept.items.where((i) => !i.isRead).length;
+        return;
+      }
+      if (result.statusCode != 404) return;
+
+      final news = await ref.read(newsRepositoryProvider).fetchList();
+      state = news.unreadCount;
     } catch (e, st) {
       silentLog('news:unread-refresh', e, st);
     }
   }
 }
 
-/// Provider for the unread news count.
+/// Provider for the Novinky badge count.
 final unreadNewsCountProvider =
     NotifierProvider<UnreadNewsCount, int>(UnreadNewsCount.new);
 
@@ -898,6 +1004,30 @@ final miniGamesListProvider = FutureProvider<MiniGameList>((ref) async {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Dashboard banners (BR-SAWX2U) — admin-managed strips on the přehled. The
+// server picks by course/class/school/role, the XP band is applied per build.
+// ═══════════════════════════════════════════════════════════════════════════
+
+final dashboardBannersRemoteDataSourceProvider =
+    Provider<DashboardBannersRemoteDataSource>((ref) {
+  return DashboardBannersRemoteDataSource(ref.watch(apiClientProvider));
+});
+
+final dashboardBannersRepositoryProvider =
+    Provider<DashboardBannersRepository>((ref) {
+  return DashboardBannersRepository(
+    ref.watch(dashboardBannersRemoteDataSourceProvider),
+    ref.watch(sharedPreferencesProvider),
+  );
+});
+
+/// The banners the dashboard may show, before the XP band is applied.
+final dashboardBannersProvider =
+    FutureProvider<List<DashboardBanner>>((ref) async {
+  return ref.watch(dashboardBannersRepositoryProvider).fetchBanners();
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Avatar Providers (BR-7JRBCN) — catalog + artwork cached in Drift, so the
 // composed avatar renders offline on every platform including web.
 // ═══════════════════════════════════════════════════════════════════════════
@@ -914,6 +1044,17 @@ final avatarRepositoryProvider = Provider<AvatarRepository>((ref) {
   );
 });
 
+/// How long a first run waits for the avatar catalog before it paints what
+/// the device already has (BR-QFW7WF).
+///
+/// An API that is down does not fail fast: the proxy holds each request ~15 s
+/// before its 502, and `RetryInterceptor` then tries once more, so an
+/// unbounded wait kept the shop on its spinner for half a minute and more —
+/// which reads as loading forever. A healthy first load takes a few seconds;
+/// past this the fetch keeps running and its catalog still lands on screen.
+final avatarFirstLoadTimeoutProvider =
+    Provider<Duration>((ref) => const Duration(seconds: 10));
+
 /// The active user's avatar: catalog, inventory and worn outfit.
 ///
 /// Refreshes from the server on read and falls back to the cache; a signed-out
@@ -924,6 +1065,7 @@ class AvatarController extends AsyncNotifier<AvatarState> {
   Future<AvatarState> build() async {
     final user = await ref.watch(activeUserProvider.future);
     final repository = ref.watch(avatarRepositoryProvider);
+    final firstLoadTimeout = ref.watch(avatarFirstLoadTimeoutProvider);
 
     if (user == null) {
       // No account yet — show the free starting outfit rather than nothing.
@@ -934,22 +1076,30 @@ class AvatarController extends AsyncNotifier<AvatarState> {
 
     // Nothing worth painting yet (a genuine first run) — wait for the fetch
     // rather than flashing an empty catalog and an "offline" notice at a
-    // device that is perfectly online.
+    // device that is perfectly online. But only for so long: past the limit
+    // the cache is shown, flagged, and the fetch replaces it when it lands.
     if (!cached.catalog.any((item) => !item.isDefault)) {
-      return repository.load(user.id);
+      final pending = repository.load(user.id);
+      try {
+        return await pending.timeout(firstLoadTimeout);
+      } on TimeoutException {
+        _publishWhenLoaded(pending);
+        return cached.copyWith(fromCache: true);
+      }
     }
 
     // Otherwise paint from local storage straight away: the catalog and its
     // artwork are already on the device, and blocking on the refresh only
     // bought a blank onboarding "vibe" step and an empty shop for as long as
     // the network took (BR-VCD7JD).
-    _refreshInBackground(repository, user.id);
+    _publishWhenLoaded(repository.load(user.id));
     return cached.copyWith(fromCache: true);
   }
 
-  /// Pull the server's copy without holding up the first frame; the state is
-  /// replaced once it lands, and a failure just leaves the cache showing.
-  void _refreshInBackground(AvatarRepository repository, String userId) {
+  /// Take the server's copy without holding up the first frame; the state is
+  /// replaced once [pending] lands, and a failure just leaves the cache
+  /// showing.
+  void _publishWhenLoaded(Future<AvatarState> pending) {
     // `build` has not published its value yet, so the notifier may well be
     // disposed (a rebuild, or the shop's retry button) before this lands —
     // assigning `state` then throws.
@@ -958,7 +1108,7 @@ class AvatarController extends AsyncNotifier<AvatarState> {
 
     unawaited(() async {
       try {
-        final refreshed = await repository.load(userId);
+        final refreshed = await pending;
         if (!disposed) state = AsyncValue.data(refreshed);
       } catch (e, st) {
         silentLog('avatar:refresh-background', e, st);
